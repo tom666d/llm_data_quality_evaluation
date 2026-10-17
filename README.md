@@ -1,53 +1,100 @@
-# Data Quality Agent 🛡️
+# DataGenie — Streaming
 
-**AI-driven data quality detection and remediation assistant powered by PySpark, Kafka, and LLM agents.**
+**Real-time data quality detection with LLM-generated remediation, built on Kafka, Spark Structured Streaming, and GPT-4o-mini.**
 
-> This project repository is created in partial fulfillment of the requirements for the Big Data Analytics course offered by the Master of Science in Business Analytics program at the Carlson School of Management, University of Minnesota.
+> Streaming extension of *DataGenie*, a Team 6 project for the Big Data Analytics course in the MSBA program at the Carlson School of Management, University of Minnesota.
 
 ---
 
-## Overview
+## What it does today
 
-Poor data quality costs organizations an estimated **$12.9 million per year on average**, yet most data pipelines still rely on manual inspection and ad hoc fixes. **Data Quality Agent** is a real-time agentic AI system that:
+1. **Detect.** Spark Structured Streaming reads loan records from Kafka and checks every 10-second micro-batch for null spikes, statistical outliers, and mixed date formats.
+2. **Gather evidence.** For each new `(column, issue_type)` pair, the detector computes facts from the batch for the agents. It finds columns that match a null column and can backfill it, sentinel values repeated among outliers, and date values that fall outside the expected range.
+3. **Diagnose.** Agent 1 (GPT-4o-mini) uses that evidence to propose a likely root cause and business impact.
+4. **Remediate.** Agent 2 writes two remediation options with PySpark code. A rule-based critic checks the output format and sends feedback for a retry (up to 2 times).
 
-1. **Detects** schema drifts, null anomalies, format inconsistencies, and statistical outliers in streaming data using Apache Spark + Kafka
-2. **Diagnoses** root causes and business impact via a multi-agent LLM pipeline (GPT-4o-mini)
-3. **Generates** ranked, runnable PySpark remediation code with confidence scores
-4. **Learns** from human decisions via a RAG feedback loop (FAISS + sentence-transformers)
-5. **Surfaces** everything through a human-in-the-loop Streamlit dashboard
+Recurring issues are logged every batch, but the LLM runs only once per unique `(column, issue_type)` pair in a session.
 
 ---
 
 ## Architecture
 
 ```
-Kafka Producer (CSV + anomaly injection)
-        ↓
-Kafka Topic: loan-stream
-        ↓
-Spark Structured Streaming (detector.py)
-  ├── Detector 1: Null Spike
-  ├── Detector 2: Statistical Outlier
-  └── Detector 3: Format Inconsistency
-        ↓ (new issues only)
-Multi-Agent LLM Pipeline (suggester.py)
-  ├── Router Agent     → routes by issue type
-  ├── Agent 1          → root cause diagnosis
-  ├── RAG Retrieval    → top-K similar past decisions (FAISS)
-  ├── Agent 2          → PySpark remediation code generation
-  └── Critic Agent     → validates output quality, retries if needed
-        ↓
-Streamlit Dashboard (app.py)
-  └── Human reviews, approves, or declines suggestions
-        ↓
-historical_decisions.json  ← RAG feedback loop
+producer.py ── CSV rows (+ injected anomalies) ──▶ Kafka topic: loan-stream
+                                                        │
+                                                        ▼
+detector.py  (Spark Structured Streaming, 10s micro-batches)
+  ├── Null Spike            null rate > 30%
+  ├── Statistical Outlier   > 5% of rows outside 1.5×IQR
+  └── Format Inconsistency  issue_d mixes MMM-YYYY and MM/YYYY
+        │ every batch ──▶ data/issues_output.json, data/quality_score.json
+        │ new issues only, with batch evidence attached
+        ▼
+suggester.py
+  ├── Agent 1   root cause + business impact, grounded in the evidence
+  ├── Agent 2   2 remediation options with PySpark code
+  └── Critic    format check, retry with feedback
+        ▼
+data/issues_with_suggestions.json
 ```
+
+---
+
+## Quick start
+
+Requires Python 3.10+, Java 17, and PySpark 4.0 (the detector pulls `spark-sql-kafka-0-10_2.13:4.0.0`).
+
+```bash
+pip install pyspark kafka-python openai python-dotenv pandas
+
+# OpenAI key
+echo "OPENAI_API_KEY=sk-..." > .env
+
+# Kafka (macOS)
+brew install kafka
+brew services start kafka
+kafka-topics --create --topic loan-stream --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
+```
+
+The producer replays a LendingClub CSV from `data/demo_lendingclub.csv` (not committed; source: [Kaggle LendingClub dataset](https://www.kaggle.com/datasets/wordsforthewise/lending-club)).
+
+Run both from the project root:
+
+```bash
+python src/detection/detector.py   # terminal 1
+python src/producer.py             # terminal 2
+```
+
+---
+
+## Project structure
+
+```
+src/
+├── producer.py            # Kafka producer: replays the CSV, injects anomalies
+├── detection/detector.py  # Spark Structured Streaming detector
+└── llm/suggester.py       # Agent 1 → Agent 2 → Critic
+data/                      # runtime outputs (git-ignored)
+```
+
+---
+
+## Roadmap
+
+The batch version of DataGenie also had routing, human review, and a feedback loop. These are being rebuilt for streaming:
+
+- [ ] **Approve.** Live Streamlit review dashboard with a per-batch quality trend
+- [ ] **Learn.** Approved decisions logged and reused for the same issue later
+- [ ] **Route.** Issue-type strategy passed into Agent 2's prompt
+- [ ] **Validate.** Critic checks that the generated code actually parses and runs
+- [ ] Non-blocking LLM calls, so the stream doesn't stall while agents run
+- [ ] Clean source data with time-windowed "incident" anomaly injection
 
 ---
 
 ## Team
 
-**Team 6 — Carlson School of Management, University of Minnesota**
+**Team 6, Carlson School of Management, University of Minnesota**
 
 | Name | Role |
 |---|---|
@@ -56,121 +103,3 @@ historical_decisions.json  ← RAG feedback loop
 | Ching-Fen Hung | Data Engineer |
 | Yonghui Kim | Integration & QA |
 | Omkar Thombare | Business & Presentation |
-
----
-
-## Dataset
-
-- **LendingClub Loan Data** — 100K rows, 12 columns (local demo subset)
-- Source: [Kaggle LendingClub Dataset](https://www.kaggle.com/datasets/wordsforthewise/lending-club)
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Streaming | Apache Kafka, Spark Structured Streaming |
-| Detection | PySpark, IQR-based outlier detection, regex format checks |
-| LLM Pipeline | OpenAI GPT-4o-mini, multi-agent pattern |
-| RAG | FAISS, sentence-transformers (all-MiniLM-L6-v2) |
-| Dashboard | Streamlit |
-| Environment | Local (Mac) + Databricks Community Edition |
-
----
-
-## Installation
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/tom666d/data-quality-agent.git
-cd data-quality-agent
-
-# 2. Install dependencies
-pip install pyspark kafka-python openai python-dotenv faiss-cpu sentence-transformers streamlit pandas
-
-# 3. Set up API key
-cp .env.example .env
-# Edit .env and add your OPENAI_API_KEY
-
-# 4. Install and start Kafka (macOS)
-brew install kafka
-brew services start kafka
-
-# 5. Create Kafka topic
-kafka-topics --create --topic loan-stream --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
-```
-
----
-
-## Usage
-
-Open three terminals, all from the project root:
-
-**Terminal 1 — Start the detector:**
-```bash
-python src/detection/detector.py
-```
-
-**Terminal 2 — Start the producer (streams CSV + injects anomalies):**
-```bash
-python src/producer.py
-```
-
-**Terminal 3 — Launch the dashboard:**
-```bash
-streamlit run streamlit_app/app.py
-```
-
----
-
-## Project Structure
-
-```
-data-quality-agent/
-├── src/
-│   ├── detection/
-│   │   └── detector.py          # Spark Structured Streaming detector
-│   ├── llm/
-│   │   └── suggester.py         # Multi-agent LLM + RAG pipeline
-│   ├── streamlit_assets/        # UI images and icons
-│   └── producer.py              # Kafka producer with anomaly injection
-├── streamlit_app/
-│   └── app.py                   # Streamlit human-review dashboard
-├── data/
-│   ├── demo_lendingclub.csv     # Local demo dataset
-│   ├── issues_output.json       # Detector output
-│   ├── issues_with_suggestions.json  # LLM suggestions
-│   └── historical_decisions.json    # RAG feedback store
-├── .env                         # API keys (not committed)
-├── .gitignore
-└── README.md
-```
-
----
-
-## Key Features
-
-### Smart LLM Triggering
-The detector tracks `(column, issue_type)` pairs seen in the current session. The LLM pipeline is only triggered when a **genuinely new** combination appears — avoiding redundant API calls on recurring issues.
-
-### Multi-Agent Pipeline
-- **Router Agent** — classifies issue type and selects remediation strategy
-- **Agent 1** — diagnoses root cause and business impact
-- **Agent 2** — generates 3 ranked PySpark remediation options with confidence scores
-- **Critic Agent** — validates output format and retries if quality checks fail
-
-### RAG Feedback Loop
-After each human decision in the dashboard, the chosen action is stored in `historical_decisions.json`. On subsequent runs, FAISS retrieves the top-3 most similar past cases and injects them into Agent 2's prompt — making suggestions progressively more aligned with analyst preferences.
-
-### Human-in-the-Loop
-No fix is ever applied automatically. Every suggestion goes through the Streamlit dashboard where an analyst reviews, approves, or declines before any action is taken.
-
----
-
-## Acknowledgements
-
-- Carlson School of Management IT Support for cloud resource provisioning
-- [LendingClub Dataset](https://www.kaggle.com/datasets/wordsforthewise/lending-club) via Kaggle
-- OpenAI GPT-4o-mini API
-- Apache Spark, Apache Kafka, FAISS, sentence-transformers
