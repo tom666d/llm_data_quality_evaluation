@@ -27,6 +27,22 @@ def per_incident(df: pd.DataFrame) -> pd.DataFrame:
               .agg(runs=("success", "size"), successes=("success", "sum"), rate=("success", "mean")))
 
 
+FAILURES = ["did not execute", "harmed clean data", "not handled", "unsafe to reuse"]
+
+
+def failure(run: pd.Series) -> str | None:
+    """The first reason a run failed, from its score fields; None for a success."""
+    if run["success"]:
+        return None
+    if not run["executes"]:
+        return "did not execute"
+    if run["clean_cells_changed"] > 0 or run["clean_rows_quarantined"] > 0.01 * max(run["clean_rows"], 1):
+        return "harmed clean data"
+    if not run["fixes_window"]:
+        return "not handled"
+    return "unsafe to reuse"
+
+
 def markdown(table: pd.DataFrame) -> str:
     cols = [str(c) for c in table.columns]
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
@@ -47,7 +63,7 @@ def summarize(df: pd.DataFrame) -> str:
             "executes": f"{runs['executes'].mean():.2f}",
             "fixes window": f"{runs['fixes_window'].mean():.2f}",
             "safe to reuse": f"{runs['safe_to_reuse'].mean():.2f}",
-            "decision matches": f"{runs['decision_matches'].mean():.2f}",
+            "decision matches": f"{runs['decision_matches'].mean():.2f}" if runs["decision"].notna().any() else "n/a",
             "time-scoped successes": int((runs["success"] & runs["scope_uses_time"]).sum()),
             "LLM calls / run": f"{runs['llm_calls'].mean():.1f}",
             "tokens / run": f"{(runs['input_tokens'] + runs['output_tokens']).mean():.0f}",
@@ -57,6 +73,9 @@ def summarize(df: pd.DataFrame) -> str:
     by_type = inc.pivot_table(index="arm", columns="case_type", values="rate", aggfunc="mean").round(2)
     by_cover = (inc.assign(coverage=inc["covered"].map({True: "covered", False: "uncovered"}))
                    .pivot_table(index="arm", columns="coverage", values="rate", aggfunc="mean").round(2))
+    reasons = (df.assign(reason=df.apply(failure, axis=1)).dropna(subset=["reason"])
+                 .pivot_table(index="arm", columns="reason", values="run", aggfunc="count", fill_value=0)
+                 .reindex(index=arms, columns=FAILURES, fill_value=0))
     grid = (inc.assign(cell=inc["successes"].astype(str) + "/" + inc["runs"].astype(str))
                .pivot_table(index=["incident_id", "case_type"], columns="arm", values="cell", aggfunc="first")
                .reset_index())
@@ -65,6 +84,7 @@ def summarize(df: pd.DataFrame) -> str:
         "## Success by arm\n\n" + markdown(pd.DataFrame(overall)),
         "## Success rate by case type\n\n" + markdown(by_type.reset_index()),
         "## Covered vs. uncovered\n\n" + markdown(by_cover.reset_index()),
+        "## Why runs failed (first reason, number of runs)\n\n" + markdown(reasons.reset_index()),
         "## Per incident (successes / runs)\n\n" + markdown(grid),
     ])
 
