@@ -28,6 +28,9 @@ def per_incident(df: pd.DataFrame) -> pd.DataFrame:
 
 
 FAILURES = ["did not execute", "harmed clean data", "not handled", "unsafe to reuse"]
+NAMES = {"A0": "No change (control)", "A1": "Quarantine all (control)", "A2": "Rules",
+         "A3-v1": "Course system (v1)", "A3-sql": "LLM, fixed prompt", "A4": "LLM agent with tools",
+         "A5": "Multi-agent"}
 
 
 def failure(run: pd.Series) -> str | None:
@@ -80,7 +83,21 @@ def summarize(df: pd.DataFrame) -> str:
                .pivot_table(index=["incident_id", "case_type"], columns="arm", values="cell", aggfunc="first")
                .reset_index())
 
+    headline = []
+    for arm in arms:
+        runs, incs = df[df["arm"] == arm], inc[inc["arm"] == arm]
+        reasons = runs.apply(failure, axis=1).dropna()
+        headline.append({
+            "method": f"{NAMES.get(arm, arm)} [{arm}]",
+            "success rate": f"{incs['rate'].mean():.2f}",
+            "main failure": f"{reasons.mode().iloc[0]} ({(reasons == reasons.mode().iloc[0]).sum()}/{len(runs)} runs)"
+                            if not reasons.empty else "-",
+            "tokens / run": f"{(runs['input_tokens'] + runs['output_tokens']).mean():,.0f}",
+            "seconds / run": f"{runs['seconds'].mean():.1f}",
+        })
+
     return "\n\n".join([
+        "## Headline\n\n" + markdown(pd.DataFrame(headline)),
         "## Success by arm\n\n" + markdown(pd.DataFrame(overall)),
         "## Success rate by case type\n\n" + markdown(by_type.reset_index()),
         "## Covered vs. uncovered\n\n" + markdown(by_cover.reset_index()),
