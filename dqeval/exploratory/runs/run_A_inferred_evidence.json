@@ -1,0 +1,128 @@
+[
+  {
+    "input": {
+      "batch_id": 0,
+      "timestamp": "2026-10-16 20:38:22",
+      "column": "loan_amnt",
+      "issue_type": "Null Spike",
+      "severity": "HIGH",
+      "detail": "Null rate: 39% (196/500 rows)",
+      "affected_rows": 196,
+      "total_rows": 500,
+      "sample_values": "[3600.0, 24700.0, 20000.0]",
+      "evidence": [
+        "Rows missing loan_amnt still have every other field populated, so the loss is isolated to this column.",
+        "funded_amnt equals loan_amnt in 100% of rows where both are present, and is populated in 100% of rows where loan_amnt is null (candidate backfill source).",
+        "funded_amnt_inv equals loan_amnt in 100% of rows where both are present, and is populated in 100% of rows where loan_amnt is null (candidate backfill source)."
+      ]
+    },
+    "diagnosis": {
+      "root_cause": "The high null rate in the loan_amnt column is likely due to inconsistent data entry or a process failure upstream that resulted in missing values; funded_amnt is a reliable backfill source but has not been utilized.",
+      "business_impact": "The null values hinder accurate analytics and reporting, which can lead to flawed decision-making and potentially impact financial modeling and risk assessment.",
+      "priority_score": 8,
+      "affected_rows_percent": 39.2
+    },
+    "remediation": {
+      "suggestions": [
+        {
+          "option": 1,
+          "action": "Backfill loan_amnt from funded_amnt",
+          "rationale": "Since funded_amnt is consistently populated where loan_amnt is null, it serves as a reliable source for backfilling missing values in the loan_amnt column.",
+          "caveats": "Ensure that backfilled values from funded_amnt are valid in the context of business rules.",
+          "pyspark_code": "from pyspark.sql.functions import col\n\ndf = df.withColumn('loan_amnt', col('loan_amnt').cast('double')).fillna({'loan_amnt': col('funded_amnt')})"
+        },
+        {
+          "option": 2,
+          "action": "Backfill loan_amnt from funded_amnt_inv",
+          "rationale": "Similar to funded_amnt, funded_amnt_inv also provides a consistent value when loan_amnt is missing, allowing for effective backfilling.",
+          "caveats": "Best to validate that the values in funded_amnt_inv are aligned with business standards before applying them.",
+          "pyspark_code": "from pyspark.sql.functions import col\n\ndf = df.withColumn('loan_amnt', col('loan_amnt').cast('double')).fillna({'loan_amnt': col('funded_amnt_inv')})"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "batch_id": 0,
+      "timestamp": "2026-10-16 20:38:22",
+      "column": "issue_d",
+      "issue_type": "Format Inconsistency",
+      "severity": "MEDIUM",
+      "detail": "Mixed date formats detected: 361 rows as MMM-YYYY, 139 rows as MM/YYYY",
+      "affected_rows": 139,
+      "total_rows": 500,
+      "sample_values": "['Dec-2015', '01/2020', 'Dec-2015', 'Dec-2015', 'Dec-2015']",
+      "evidence": [
+        "361 rows use MMM-YYYY (1 distinct value(s), spanning Dec 2015 to Dec 2015); most common: 'Dec-2015' x361.",
+        "139 rows use MM/YYYY (1 distinct value(s), spanning Jan 2020 to Jan 2020); most common: '01/2020' x139.",
+        "None of the MM/YYYY dates fall within the MMM-YYYY range, so they are not the same dates written in another format."
+      ]
+    },
+    "diagnosis": {
+      "root_cause": "The presence of mixed date formats is likely due to an inconsistency in data entry or data extraction processes, where some dates were formatted as MMM-YYYY and others as MM/YYYY without standardization.",
+      "business_impact": "This inconsistency can lead to inaccuracies in reporting and analytics, compromising decision-making that relies on date-based data.",
+      "priority_score": 6,
+      "affected_rows_percent": 27.8
+    },
+    "remediation": {
+      "suggestions": [
+        {
+          "option": 1,
+          "action": "Standardize Date Formats to MMM-YYYY",
+          "rationale": "Convert all dates to the MMM-YYYY format to ensure consistency and accuracy in reporting, as it is the more prevalent format in the dataset.",
+          "caveats": "Ensure that no MM/YYYY dates represent different actual dates before converting to avoid data loss.",
+          "pyspark_code": "from pyspark.sql.functions import when, date_format, to_date\n\ndf = df.withColumn('issue_d', when(df.issue_d.contains('/'), date_format(to_date(df.issue_d, 'MM/yyyy'), 'MMM-yyyy')).otherwise(df.issue_d))"
+        },
+        {
+          "option": 2,
+          "action": "Mark MM/YYYY Dates as Invalid",
+          "rationale": "Flag all dates in MM/YYYY format as invalid to prevent them from being used in analysis, maintaining data integrity.",
+          "caveats": "This will result in loss of data for rows with MM/YYYY dates, which may impact analyses that require those records.",
+          "pyspark_code": "from pyspark.sql.functions import regexp_replace\n\ndf = df.withColumn('issue_d', regexp_replace(df.issue_d, '^[0-9]{2}/[0-9]{4}$', 'INVALID'))"
+        }
+      ]
+    }
+  },
+  {
+    "input": {
+      "batch_id": 0,
+      "timestamp": "2026-10-16 20:38:22",
+      "column": "annual_inc",
+      "issue_type": "Statistical Outlier",
+      "severity": "MEDIUM",
+      "detail": "51 outlier(s) (10.2% of rows). IQR bounds: [-35000.00, 197000.00]",
+      "affected_rows": 51,
+      "total_rows": 500,
+      "sample_values": "[9999999.0, 9999999.0, 9999999.0, 9999999.0, 9999999.0]",
+      "evidence": [
+        "The middle 50% of annual_inc lies between 52,000.0 and 110,000.0.",
+        "46 of 51 outliers (90%) are the exact value 9,999,999.0; a repeated exact value suggests a placeholder or sentinel, not genuine extremes.",
+        "The other 5 outliers range from 205,000.0 to 300,000.0 and may be legitimate values."
+      ]
+    },
+    "diagnosis": {
+      "root_cause": "The presence of a sentinel value (9,999,999.0) indicates a placeholder for missing or erroneous data in the annual_inc column, likely due to data entry or upstream processing issues.",
+      "business_impact": "This could skew average income calculations and adversely affect analytics, reporting, or predictive modeling efforts.",
+      "priority_score": 5,
+      "affected_rows_percent": 10.2
+    },
+    "remediation": {
+      "suggestions": [
+        {
+          "option": 1,
+          "action": "Replace sentinel value with null",
+          "rationale": "Replacing the sentinel value (9,999,999.0) with null encourages proper handling of missing data and avoids skewing the analysis.",
+          "caveats": "This approach does not recover potential legitimate values for the 5 other outliers.",
+          "pyspark_code": "df = df.withColumn('annual_inc', when(col('annual_inc') == 9999999.0, None).otherwise(col('annual_inc')))"
+        },
+        {
+          "option": 2,
+          "action": "Flag outliers for review",
+          "rationale": "Flagging the outliers keeps data integrity and allows for further investigation to verify if they are legitimate or erroneous.",
+          "caveats": "This option requires additional processes to address the flagged rows accordingly after review.",
+          "pyspark_code": "from pyspark.sql.functions import col, when\n\noutlier_threshold = 200000.0\ndf = df.withColumn('is_outlier', when((col('annual_inc') > 9999999.0) | (col('annual_inc') > outlier_threshold), True).otherwise(False))"
+        }
+      ]
+    }
+  }
+]

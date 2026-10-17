@@ -1,0 +1,143 @@
+[
+  {
+    "input": {
+      "batch_id": 0,
+      "timestamp": "2026-10-16 20:53:05",
+      "column": "loan_amnt",
+      "issue_type": "Null Spike",
+      "severity": "HIGH",
+      "detail": "Null rate: 39% (196/500 rows)",
+      "affected_rows": 196,
+      "total_rows": 500,
+      "sample_values": "[3600.0, 24700.0, 20000.0]",
+      "evidence": [
+        "In rows where loan_amnt is null, every other column is at least 95% filled.",
+        "funded_amnt equals loan_amnt in 100% of the 304 rows where both are present, and is filled in 100% of rows where loan_amnt is null.",
+        "funded_amnt_inv equals loan_amnt in 100% of the 304 rows where both are present, and is filled in 100% of rows where loan_amnt is null."
+      ]
+    },
+    "diagnosis": {
+      "root_cause": "The high null rate in loan_amnt is likely due to data entry errors or incomplete data capturing processes, as evidenced by 100% filled columns funded_amnt and funded_amnt_inv correlating with loan_amnt. This suggests dependency on those columns, and potential systematic issue in data collection for loan_amnt.",
+      "business_impact": "The null spike can severely impair the accuracy of financial analytics and reporting, leading to flawed risk assessments and decision-making models.",
+      "priority_score": 8,
+      "affected_rows_percent": 39.2
+    },
+    "remediation": {
+      "suggestions": [
+        {
+          "option": 1,
+          "action": "Recover loan_amnt from funded_amnt",
+          "rationale": "Given that funded_amnt is always equal to loan_amnt when both are present, we can safely replace null values in loan_amnt with the corresponding values from funded_amnt.",
+          "caveats": "This will only work if funded_amnt is always a true representation of loan_amnt.",
+          "pyspark_code": "from pyspark.sql import SparkSession\nfrom pyspark.sql.functions import when\n\nspark = SparkSession.builder.appName('DataRemediation').getOrCreate()\ndf = df.withColumn('loan_amnt', when(df['loan_amnt'].isNull(), df['funded_amnt']).otherwise(df['loan_amnt']))"
+        },
+        {
+          "option": 2,
+          "action": "Set loan_amnt to null where imputation is not possible",
+          "rationale": "In cases where recovery values are not sufficient, we should leave loan_amnt as null to avoid introducing inaccuracies into the dataset.",
+          "caveats": "This approach does not fill nulls and may lead to further analysis challenges.",
+          "pyspark_code": "from pyspark.sql import SparkSession\n\nspark = SparkSession.builder.appName('DataRemediation').getOrCreate()\ndf = df.withColumn('loan_amnt', when(df['loan_amnt'].isNull() & df['funded_amnt'].isNotNull(), None).otherwise(df['loan_amnt']))"
+        }
+      ],
+      "critic": {
+        "passed": true,
+        "attempts": 1,
+        "feedback": "OK"
+      }
+    }
+  },
+  {
+    "input": {
+      "batch_id": 0,
+      "timestamp": "2026-10-16 20:53:05",
+      "column": "issue_d",
+      "issue_type": "Format Inconsistency",
+      "severity": "MEDIUM",
+      "detail": "Mixed date formats detected: 361 rows as MMM-YYYY, 139 rows as MM/YYYY",
+      "affected_rows": 139,
+      "total_rows": 500,
+      "sample_values": "['Dec-2015', '01/2020', 'Dec-2015', 'Dec-2015', 'Dec-2015']",
+      "evidence": [
+        "361 rows use MMM-YYYY (1 distinct value(s), spanning Dec 2015 to Dec 2015); most common: 'Dec-2015' x361.",
+        "139 rows use MM/YYYY (1 distinct value(s), spanning Jan 2020 to Jan 2020); most common: '01/2020' x139.",
+        "0 of 1 distinct MM/YYYY value(s) fall within the MMM-YYYY range (Dec 2015 to Dec 2015)."
+      ]
+    },
+    "diagnosis": {
+      "root_cause": "The likely root cause is inconsistent data entry practices, where different formats were used for date representation. This is supported by the observations of 361 rows in MMM-YYYY format and 139 rows in MM/YYYY format.",
+      "business_impact": "This inconsistency can lead to erroneous analytics and reporting, potentially skewing insights and decision-making.",
+      "priority_score": 6,
+      "affected_rows_percent": 27.8
+    },
+    "remediation": {
+      "suggestions": [
+        {
+          "option": 1,
+          "action": "Standardize date format to MMM-YYYY",
+          "rationale": "Since the MMM-YYYY format has a higher occurrence, we will standardize all dates to this format for consistency.",
+          "caveats": "This will set invalid MM/YYYY dates to null.",
+          "pyspark_code": "from pyspark.sql import functions as F\nfrom pyspark.sql import SparkSession\n\nspark = SparkSession.builder.appName('DateFormatRemediation').getOrCreate()\n# Assuming df is the DataFrame containing the 'issue_d' column\n\ndf = df.withColumn(\n    'issue_d',\n    F.when(F.col('issue_d').rlike('^[A-Za-z]{3}-[0-9]{4}$'), F.col('issue_d'))\n     .when(F.col('issue_d').rlike('^[0-9]{2}/[0-9]{4}$'), None)\n     .otherwise(None)\n)"
+        },
+        {
+          "option": 2,
+          "action": "Set invalid dates to null",
+          "rationale": "This approach ensures that any date format not conforming to MMM-YYYY is replaced with null, avoiding inaccurate data representation.",
+          "caveats": "Information from the MM/YYYY format will be lost entirely.",
+          "pyspark_code": "from pyspark.sql import functions as F\nfrom pyspark.sql import SparkSession\n\nspark = SparkSession.builder.appName('DateFormatRemediation').getOrCreate()\n# Assuming df is the DataFrame containing the 'issue_d' column\n\ndf = df.withColumn(\n    'issue_d',\n    F.when(F.col('issue_d').rlike('^[A-Za-z]{3}-[0-9]{4}$'), F.col('issue_d'))\n     .otherwise(None)\n)"
+        }
+      ],
+      "critic": {
+        "passed": true,
+        "attempts": 1,
+        "feedback": "OK"
+      }
+    }
+  },
+  {
+    "input": {
+      "batch_id": 0,
+      "timestamp": "2026-10-16 20:53:05",
+      "column": "annual_inc",
+      "issue_type": "Statistical Outlier",
+      "severity": "MEDIUM",
+      "detail": "51 outlier(s) (10.2% of rows). IQR bounds: [-35000.00, 197000.00]",
+      "affected_rows": 51,
+      "total_rows": 500,
+      "sample_values": "[9999999.0, 9999999.0, 9999999.0, 9999999.0, 9999999.0]",
+      "evidence": [
+        "The middle 50% of annual_inc lies between 52,000.0 and 110,000.0.",
+        "The most common outlier value is 9,999,999.0: 46 of 51 outliers (90%).",
+        "The other 5 outliers take 5 distinct value(s) from 205,000.0 to 300,000.0."
+      ]
+    },
+    "diagnosis": {
+      "root_cause": "Data entry error or system glitch leading to unrealistic income values being recorded. This is supported by the presence of many identical extreme values (9999999.0) among the outliers.",
+      "business_impact": "The presence of these outliers can skew analytics and reporting, potentially leading to inaccurate insights and flawed decision-making.",
+      "priority_score": 5,
+      "affected_rows_percent": 10.2
+    },
+    "remediation": {
+      "suggestions": [
+        {
+          "option": 1,
+          "action": "Replace outliers with nulls",
+          "rationale": "Given the presence of extreme values that likely result from data entry errors, it's best to set these outliers to null to avoid skewed analyses.",
+          "caveats": "This approach will lead to a loss of data for some rows, which may affect reporting.",
+          "pyspark_code": "from pyspark.sql import SparkSession\nfrom pyspark.sql.functions import col, when\n\nspark = SparkSession.builder.appName('DataQualityRemediation').getOrCreate()\ndf = df.withColumn('annual_inc', when((col('annual_inc') < -35000) | (col('annual_inc') > 197000), None).otherwise(col('annual_inc')))"
+        },
+        {
+          "option": 2,
+          "action": "Flag outliers for review",
+          "rationale": "Flagging these values for manual review allows for potential correction by examining source data, which could help retain important information.",
+          "caveats": "This requires follow-up actions to manually review and potentially correct flagged entries.",
+          "pyspark_code": "from pyspark.sql import SparkSession\nfrom pyspark.sql.functions import col, when\n\nspark = SparkSession.builder.appName('DataQualityRemediation').getOrCreate()\ndf = df.withColumn('annual_inc_flag', when((col('annual_inc') < -35000) | (col('annual_inc') > 197000), 1).otherwise(0))"
+        }
+      ],
+      "critic": {
+        "passed": true,
+        "attempts": 2,
+        "feedback": "OK"
+      }
+    }
+  }
+]
