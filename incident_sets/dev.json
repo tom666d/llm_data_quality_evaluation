@@ -1,0 +1,95 @@
+[
+  {
+    "incident_id": "dev-r1", "split": "dev", "window": 2, "column": "loan_amnt",
+    "case_type": "recoverable", "family": "course_null",
+    "corruption": {"scope": "source_system = 'B'", "value": "NULL"},
+    "recovery": "funded_amnt",
+    "counterexamples": "loan_amnt >= 30000",
+    "description": "Feed B's mapping drops loan_amnt after a schema rename; funded_amnt still arrives."
+  },
+  {
+    "incident_id": "dev-r2", "split": "dev", "window": 5, "column": "grade",
+    "case_type": "recoverable", "family": "course_sentinel",
+    "corruption": {"scope": "source_system = 'C'", "value": "'U'"},
+    "recovery": "substring(sub_grade, 1, 1)",
+    "counterexamples": "grade = 'G'",
+    "description": "Feed C sends the placeholder grade 'U' (unknown); sub_grade is still populated."
+  },
+  {
+    "incident_id": "dev-r3", "split": "dev", "window": 8, "column": "annual_inc",
+    "case_type": "recoverable", "family": "unit_change",
+    "corruption": {"scope": "source_system = 'B' AND ingested_at >= TIMESTAMP '2026-01-05 14:10:00'", "value": "annual_inc / 12"},
+    "recovery": "annual_inc * 12",
+    "counterexamples": "annual_inc < 25000",
+    "description": "A feed B release starts sending monthly instead of annual income, unrounded, from 14:10."
+  },
+  {
+    "incident_id": "dev-p1", "split": "dev", "window": 11, "column": "issue_d",
+    "case_type": "representation", "family": "course_overwrite",
+    "corruption": {"scope": "source_system = 'A'", "value": "strftime(strptime(issue_d, '%b-%Y'), '%m/%Y')"},
+    "equivalence": "strptime(out, '%m/%Y') = strptime(ref, '%b-%Y')",
+    "canonical": "regexp_matches(out, '^[A-Z][a-z]{2}-[0-9]{4}$')",
+    "counterexamples": "issue_d = 'Nov-2015'",
+    "description": "Feed A switches its date serializer to MM/YYYY; the months themselves are correct."
+  },
+  {
+    "incident_id": "dev-p2", "split": "dev", "window": 14, "column": "int_rate",
+    "case_type": "representation", "family": "unit_scale",
+    "corruption": {"scope": "source_system = 'D'", "value": "int_rate / 100"},
+    "equivalence": "abs(out * 100 - ref) < 0.001",
+    "canonical": "out >= 1",
+    "counterexamples": "int_rate < 7",
+    "description": "Feed D sends interest rates as fractions (0.1399) instead of percentages (13.99)."
+  },
+  {
+    "incident_id": "dev-p3", "split": "dev", "window": 21, "column": "term",
+    "case_type": "representation", "family": "format_drift",
+    "corruption": {"scope": "source_system = 'C'", "value": "trim(replace(term, ' months', '')) || 'M'"},
+    "equivalence": "regexp_extract(out, '[0-9]+') = trim(replace(ref, ' months', ''))",
+    "canonical": "out IN (' 36 months', ' 60 months')",
+    "counterexamples": "term = ' 60 months'",
+    "description": "Feed C abbreviates term as '36M' / '60M' after a front-end change."
+  },
+  {
+    "incident_id": "dev-u1", "split": "dev", "window": 17, "column": "annual_inc",
+    "case_type": "unrecoverable", "family": "course_sentinel",
+    "corruption": {"scope": "id % 100 < 8", "value": "9999999"},
+    "counterexamples": "annual_inc >= 500000",
+    "description": "Missing incomes are defaulted to the placeholder 9999999 across all feeds."
+  },
+  {
+    "incident_id": "dev-u2", "split": "dev", "window": 20, "column": "issue_d",
+    "case_type": "unrecoverable", "family": "course_overwrite",
+    "corruption": {"scope": "source_system = 'B'", "value": "'01/2020'"},
+    "counterexamples": "issue_d = 'Nov-2015'",
+    "description": "Feed B overwrites issue_d with a hard-coded '01/2020' left over from a test fixture."
+  },
+  {
+    "incident_id": "dev-u3", "split": "dev", "window": 23, "column": "tot_cur_bal",
+    "case_type": "unrecoverable", "family": "zero_fill",
+    "corruption": {"scope": "source_system = 'D' AND ingested_at >= TIMESTAMP '2026-01-06 15:10:00'", "value": "0"},
+    "counterexamples": "tot_cur_bal < 2000",
+    "description": "After a bureau timeout, feed D fills current balance with 0 instead of leaving it missing."
+  },
+  {
+    "incident_id": "dev-n1", "split": "dev", "window": 3, "column": "annual_inc",
+    "case_type": "normal", "family": "rare_population",
+    "population": "annual_inc >= 150000",
+    "counterexamples": "annual_inc >= 150000",
+    "description": "A partner campaign brings a burst of high-income applicants; the values are real."
+  },
+  {
+    "incident_id": "dev-n2", "split": "dev", "window": 9, "column": "emp_length",
+    "case_type": "normal", "family": "rare_population",
+    "population": "emp_length = '< 1 year'",
+    "counterexamples": "emp_length = '< 1 year'",
+    "description": "A graduate-loan promotion brings a window of applicants employed less than a year."
+  },
+  {
+    "incident_id": "dev-n3", "split": "dev", "window": 15, "column": "loan_amnt",
+    "case_type": "normal", "family": "rare_population",
+    "population": "loan_amnt >= 30000",
+    "counterexamples": "loan_amnt >= 30000",
+    "description": "A large-loan product launch fills a window with loans of 30,000 or more."
+  }
+]
