@@ -60,6 +60,14 @@ def build_case(ref: pd.DataFrame, inj: incidents.Injected) -> Case:
 def run(incident_path: Path, split: str, arm_names: list[str], out_dir: Path,
         runs: int = LLM_RUNS, ref: pd.DataFrame | None = None) -> list[dict]:
     check_freeze(split)
+    meta = {   # recorded before any output exists, so git_dirty reflects the code that ran
+        "split": split, "arms": arm_names, "runs_per_llm_arm": runs,
+        "incident_file": str(incident_path), "incident_sha256": data.sha256(incident_path),
+        "git_commit": git("rev-parse", "HEAD"), "git_dirty": bool(git("status", "--porcelain")),
+        "git_tags": git("tag", "--points-at", "HEAD").split(),
+        "started": datetime.now().isoformat(timespec="seconds"),
+        "packages": {p: importlib.metadata.version(p) for p in PACKAGES},
+    }
     ref  = data.load_reference() if ref is None else ref
     incs = incidents.load_incidents(incident_path)
     if any(i.split != split for i in incs):
@@ -95,13 +103,7 @@ def run(incident_path: Path, split: str, arm_names: list[str], out_dir: Path,
     with open(out_dir / "records.jsonl", "w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r, default=str) + "\n")
-    meta = {
-        "split": split, "arms": arm_names, "runs_per_llm_arm": runs,
-        "incident_file": str(incident_path), "incident_sha256": data.sha256(incident_path),
-        "git_commit": git("rev-parse", "HEAD"), "git_dirty": bool(git("status", "--porcelain")),
-        "started": datetime.now().isoformat(timespec="seconds"),
-        "packages": {p: importlib.metadata.version(p) for p in PACKAGES},
-    }
+    meta["finished"] = datetime.now().isoformat(timespec="seconds")
     (out_dir / "run.json").write_text(json.dumps(meta, indent=2))
     return records
 
