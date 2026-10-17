@@ -4,6 +4,8 @@
 
 > Streaming extension of *DataGenie*, a Team 6 project for the Big Data Analytics course in the MSBA program at the Carlson School of Management, University of Minnesota.
 
+> **Status:** the streaming pipeline below is now a frozen prototype in `prototype/`. Current work is an evaluation of when LLMs add value in data-quality incident handling; see [`docs/EVAL_SPEC.md`](docs/EVAL_SPEC.md).
+
 ---
 
 ## What it does today
@@ -49,7 +51,8 @@ data/issues_with_suggestions.json
 Requires Python 3.10+, Java 17, and PySpark 4.0 (the detector pulls `spark-sql-kafka-0-10_2.13:4.0.0`).
 
 ```bash
-pip install pyspark kafka-python openai python-dotenv pandas
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
 # OpenAI key
 echo "OPENAI_API_KEY=sk-..." > .env
@@ -65,8 +68,8 @@ The producer replays a LendingClub CSV from `data/demo_lendingclub.csv` (not com
 Run both from the project root:
 
 ```bash
-python src/detection/detector.py   # terminal 1
-python src/producer.py             # terminal 2
+python prototype/detection/detector.py   # terminal 1
+python prototype/producer.py             # terminal 2
 ```
 
 ---
@@ -74,11 +77,14 @@ python src/producer.py             # terminal 2
 ## Project structure
 
 ```
-src/
+prototype/                 # streaming prototype (frozen)
 ├── producer.py            # Kafka producer: replays the CSV, injects anomalies
 ├── detection/detector.py  # Spark Structured Streaming detector
 └── llm/suggester.py       # Agent 1 → Agent 2 → Critic
-data/                      # runtime outputs (git-ignored)
+dqeval/                    # evaluation code (in progress)
+tests/                     # pytest suite
+docs/EVAL_SPEC.md          # frozen evaluation spec
+data/                      # reference data and runtime outputs (git-ignored)
 ```
 
 ---

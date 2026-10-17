@@ -23,7 +23,7 @@ from typing import Any
 import openai
 from dotenv import load_dotenv
 
-# suggester.py is at src/llm/, so go up 3 levels to reach project root
+# suggester.py is at prototype/llm/, so go up 3 levels to reach project root
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_PATH  = PROJECT_ROOT / "data" / "issues_with_suggestions.json"
 MODEL        = "gpt-4o-mini"

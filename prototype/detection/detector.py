@@ -9,7 +9,7 @@ Key behaviors:
      so the LLM processes exactly the new findings rather than the full history.
 
 Usage (from the project root):
-    python src/detection/detector.py
+    python prototype/detection/detector.py
 """
 
 import json
@@ -67,7 +67,7 @@ LOAN_SCHEMA = StructType([
 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-# detector.py is at src/detection/, so go up 3 levels to reach project root
+# detector.py is at prototype/detection/, so go up 3 levels to reach project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR     = PROJECT_ROOT / "data"
 
@@ -80,7 +80,7 @@ def trigger_suggester(new_issues: list) -> set[tuple[str, str]]:
     Returns the (column, issue_type) keys whose suggestions passed the critic;
     an exception or a critic failure leaves the issue eligible for retry.
     """
-    llm_dir = PROJECT_ROOT / "src" / "llm"
+    llm_dir = PROJECT_ROOT / "prototype" / "llm"
     if str(llm_dir) not in sys.path:
         sys.path.insert(0, str(llm_dir))
 
