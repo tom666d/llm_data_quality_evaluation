@@ -21,6 +21,10 @@ import pandas as pd
 WORKER          = Path(__file__).resolve().with_name("_pyspark_worker.py")
 TIMEOUT_SECONDS = 120
 SECRET_MARKERS  = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+# Imports any PySpark pipeline already has; prepended so a fix is judged on what it does, not on a missing import
+PREAMBLE = ("from pyspark.sql import functions as F\n"
+            "from pyspark.sql.functions import (col, when, lit, expr, coalesce, mean, trim, upper, lower, length,\n"
+            "    substring, concat, regexp_replace, regexp_extract, to_date, date_format, isnan)\n")
 
 
 def clean_env() -> dict[str, str]:
@@ -37,7 +41,7 @@ def run_code(code: str, tables: dict[str, pd.DataFrame],
         tmp = Path(tmp)
         for name, table in tables.items():
             table.to_parquet(tmp / f"{name}.in.parquet", index=False)
-        (tmp / "candidate.py").write_text(code)
+        (tmp / "candidate.py").write_text(PREAMBLE + code)
         try:
             proc = subprocess.run([sys.executable, str(WORKER), str(tmp), *tables],
                                   cwd=tmp, env=clean_env(), capture_output=True, text=True, timeout=timeout)

@@ -1,6 +1,8 @@
 # Evaluation Spec
 
-**Status: DRAFT, not yet frozen.** This spec is committed before any rule library, agent, or held-out incident exists. Changes after the freeze go in the changelog at the end. Any results they affect are reported as a separate version.
+**Status: frozen (freeze point 1).** This spec was committed before any rule library, agent, or held-out incident existed. Changes after the freeze go in the changelog at the end. Any results they affect are reported as a separate version.
+
+> **Scope reduced on 2026-10-17**, before any held-out result existed. The goal is a working evaluation that produces results, not exhaustive rigor. The arms are A0, A1, A2, A3-v1, A3-sql, A4, and optionally A5. Q4, the format and evidence ablations, threshold sensitivity, and manual failure labels were dropped. See the changelog for details.
 
 ---
 
@@ -297,6 +299,22 @@ The rules were written **after** those failures had been seen. This result motiv
 - **§4, alerts.** An incident's alert must be one the incident causes, meaning it does not fire on the same window without the incident. Otherwise background alerts from natural drift could satisfy the "triggers an alert" requirement.
 - **§5.3, covered vs. uncovered.** These are now defined by mechanism family, relative to the three course-project mechanisms. The old definition used the dev set, which does not exist yet when the held-out sets are written.
 - **§7.1, regression slice.** It is now taken from windows after the incident's own window, instead of from "outside every incident window". With at least 20 incidents and only 12 to 13 windows per held-out split, the old rule left no rows. Rows after the incident's window also match what reuse safety asks: will the rule harm later batches?
+
+**2026-10-17, scope reduction** (before any held-out result; the aim is a working evaluation that produces results, not maximal rigor):
+- **Arms (§6.2).** The kept arms are:
+  - A0 and A1, the controls;
+  - A2, the rules;
+  - A3-v1, the course system as submitted;
+  - A3-sql, the LLM pipeline with evidence and contract output, now one structured call that returns a diagnosis and a candidate;
+  - A4, a single tool-using agent;
+  - A5, multi-agent, which becomes optional for milestone 2.
+
+  A3-py and A3-sql-noev are dropped, and with them the format and evidence ablations.
+- **Q4 (§7.4).** The judge meta-evaluation is dropped.
+- **Reporting (§7.3).**
+  - Threshold sensitivity is dropped.
+  - Manual failure labels are replaced by categories derived automatically from the scores: did not execute, not handled, harmed clean data, unsafe to reuse.
+- **Code arms (§7.1).** PySpark code runs after a fixed preamble of common imports (`pyspark_runner.PREAMBLE`). A fix is judged on what it does, not on a missing import. In the first dev run of A3-v1, 11 of 12 snippets crashed on missing imports alone.
 
 **2026-10-17, reporting additions** (success is unchanged):
 - **§7.3.** Each record also carries two fields.

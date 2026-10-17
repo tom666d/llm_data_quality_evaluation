@@ -25,9 +25,11 @@ import pandas as pd
 from . import data, incidents, monitors, scoring
 from .arms import Arm, Case, NoChange, Proposal, QuarantineAll
 from .arms.rules import Rules
+from .arms.llm import LLMPipeline
 from .arms.v1 import V1
 
-ARMS: dict[str, type[Arm]] = {"A0": NoChange, "A1": QuarantineAll, "A2": Rules, "A3-v1": V1}
+ARMS: dict[str, type[Arm]] = {"A0": NoChange, "A1": QuarantineAll, "A2": Rules,
+                             "A3-v1": V1, "A3-sql": LLMPipeline}
 LLM_RUNS    = 5
 FREEZE_TAGS = {"S1": "eval-freeze-m1", "S2": "eval-freeze-m2"}
 PACKAGES    = ["duckdb", "sqlglot", "pandas", "numpy", "openai"]
