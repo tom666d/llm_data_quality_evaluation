@@ -1,5 +1,3 @@
-import numpy as np
-import pandas as pd
 import pytest
 
 from dqeval import data, incidents, monitors
@@ -8,19 +6,9 @@ from dqeval.incidents import Incident
 WINDOW = 10
 
 
-@pytest.fixture(scope="module")
-def ref():
-    """Stationary toy reference over every evaluation column, so clean windows raise no alerts."""
-    n   = 100_000
-    rng = np.random.default_rng(1)
-    df  = pd.DataFrame({"id": np.arange(1, n + 1)})
-    for col in data.COLUMNS:
-        df[col] = rng.lognormal(10, 0.3, n).round(2)
-    for col in ["term", "grade", "sub_grade", "emp_length", "home_ownership", "verification_status",
-                "loan_status", "purpose", "addr_state"]:
-        df[col] = rng.choice(["Alpha", "Beta", "Gamma"], n)
-    df["issue_d"] = rng.choice(["Oct-2015", "Nov-2015", "Dec-2015"], n)
-    return data.enrich(df[["id", *data.COLUMNS]])
+@pytest.fixture
+def ref(stationary_ref):
+    return stationary_ref
 
 
 def monitors_for(ref, scope, value, column):

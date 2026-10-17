@@ -94,8 +94,10 @@ Rules, prompts, tools, and agents may be tuned on the dev set freely.
 - **One column per incident.** Each incident corrupts exactly one column, and systems receive only the alerts for that column.
 - **Checker.** A checker validates each incident: the format, that it triggers an alert, and that its ground truth is consistent.
 - **Size.** Each set has at least 20 incidents, with at least 4 of each case type.
-  - **Uncovered:** at least 10 use mechanisms that are absent from the dev set.
-  - **Covered:** the rest are new variants of dev mechanisms.
+  - **Covered:** variants of the three course-project mechanisms, which may use other columns, scopes, or rates. Their mechanism family is `course_null`, `course_sentinel`, or `course_overwrite`.
+  - **Uncovered:** at least 10 incidents use any other mechanism family.
+
+  Every incident names its mechanism family. The dev set is written after the held-out sets, so "covered" cannot be defined by the dev set. Results are also reported split by whether the frozen rule library had a matching rule.
 - **Use.** S1 is used once, for milestone 1. S2 is used once, for milestone 2. S2 is needed because S1's per-incident results become visible after milestone 1.
 - **Storage.** Both sets are stored outside the repository, and their SHA-256 hashes are committed before development starts. The developer does not open a set until its milestone's systems are frozen (§9).
 - **Limitation.** The hashes prove the sets did not change; they cannot prove nobody looked. Blindness rests on the process above, and is disclosed as such.
@@ -188,7 +190,7 @@ The unit of analysis is the **incident**, not the cell.
 2. **Fixes the window.** The result is compared cell by cell with the reference, joined on `id`. For PySpark candidates, only effects are scored:
    - A new boolean column ending in `_quarantine` counts as a quarantine flag. Any other new column is ignored.
    - A dropped injected row counts as not handled. A dropped clean row counts as harm.
-3. **Safe to reuse.** The candidate is applied to the incident's counterexamples and to a clean regression slice: 5,000 reference rows taken from outside every incident window. It must change no cells and quarantine at most 1% of rows.
+3. **Safe to reuse.** The candidate is applied to the incident's counterexamples and to a clean regression slice. The slice is 5,000 reference rows from the incident's split, taken from the windows after the incident's window (topped up from the windows before it), excluding the incident's own rows. Incidents are evaluated independently, so another incident's window counts as clean reference data here. The candidate must change no cells and quarantine at most 1% of rows.
 
 ### 7.2 Incident success
 
@@ -293,3 +295,5 @@ The rules were written **after** those failures had been seen. This result motiv
 **2026-10-17, after freeze point 1 and before any held-out incident existed** (no results affected):
 - **§4, numeric shift.** The monitor also checks p5. With only the median and p95, downward shifts on part of a window were invisible. An example found while implementing it: one feed switching to monthly income moved p5 by 5.6×, but the median by only 1.10× and p95 by only 1.05×. Without p5, incident authors could only use upward shifts.
 - **§4, alerts.** An incident's alert must be one the incident causes, meaning it does not fire on the same window without the incident. Otherwise background alerts from natural drift could satisfy the "triggers an alert" requirement.
+- **§5.3, covered vs. uncovered.** These are now defined by mechanism family, relative to the three course-project mechanisms. The old definition used the dev set, which does not exist yet when the held-out sets are written.
+- **§7.1, regression slice.** It is now taken from windows after the incident's own window, instead of from "outside every incident window". With at least 20 incidents and only 12 to 13 windows per held-out split, the old rule left no rows. Rows after the incident's window also match what reuse safety asks: will the rule harm later batches?

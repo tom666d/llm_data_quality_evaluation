@@ -14,6 +14,7 @@ Incident JSON (a file holds a list of these):
   "window":        3,                        # global window index, must lie in the split
   "column":        "annual_inc",
   "case_type":     "unrecoverable",          # recoverable | representation | unrecoverable | normal
+  "family":        "course_sentinel",        # mechanism family; course_* families count as covered
   "corruption":    {"scope": "source_system = 'B'", "value": "annual_inc / 12"},   # null for normal
   "population":    null,                     # optional: fill the window with split rows matching this predicate
   "recovery":      null,                     # recoverable: SQL rebuilding the reference value from visible columns
@@ -30,10 +31,14 @@ from pathlib import Path
 
 import duckdb
 import pandas as pd
+import sqlglot
+from sqlglot import exp
 
 from . import data
 
 CASE_TYPES = ("recoverable", "representation", "unrecoverable", "normal")
+# Variants of the three course-project mechanisms count as covered (spec §5.3); any other family is uncovered
+COVERED_FAMILIES = ("course_null", "course_sentinel", "course_overwrite")
 EXPECTED_DECISION = {
     "recoverable":    "RESTORE",
     "representation": "STANDARDIZE",
@@ -43,6 +48,7 @@ EXPECTED_DECISION = {
 MIN_COUNTEREXAMPLES = 10
 MAX_COUNTEREXAMPLES = 500
 NUMERIC_TOLERANCE   = 0.01   # recovery proofs may differ by rounding, e.g. to cents
+LEAK_EQUALITY       = 0.95   # an "unrecoverable" incident whose reference values sit in a visible column this often is suspect
 
 
 @dataclass(frozen=True)
@@ -59,6 +65,7 @@ class Incident:
     equivalence:      str | None = None
     canonical:        str | None = None
     counterexamples:  str | None = None
+    family:           str = ""
     description:      str = ""
 
     @classmethod
@@ -70,8 +77,13 @@ class Incident:
             corruption_scope=corruption.get("scope"), corruption_value=corruption.get("value"),
             population=d.get("population"), recovery=d.get("recovery"),
             equivalence=d.get("equivalence"), canonical=d.get("canonical"),
-            counterexamples=d.get("counterexamples"), description=d.get("description", ""),
+            counterexamples=d.get("counterexamples"), family=d.get("family", ""),
+            description=d.get("description", ""),
         )
+
+    @property
+    def covered(self) -> bool:
+        return self.family in COVERED_FAMILIES
 
 
 @dataclass
@@ -146,6 +158,12 @@ def inject(ref: pd.DataFrame, inc: Incident) -> Injected:
 
 
 # ── Author-side consistency checks ────────────────────────────────────────────
+def referenced_columns(expression: str) -> set[str]:
+    """Column names an SQL expression reads."""
+    tree = sqlglot.parse_one(f"SELECT {expression}", read="duckdb")
+    return {col.name for col in tree.find_all(exp.Column)}
+
+
 def check_definition(inc: Incident) -> list[str]:
     """Problems detectable without running the incident."""
     problems = []
@@ -164,6 +182,13 @@ def check_definition(inc: Incident) -> list[str]:
         problems.append("corruption.scope and corruption.value are required")
     if inc.case_type == "recoverable" and not inc.recovery:
         problems.append("a recoverable incident needs a recovery expression")
+    if inc.recovery:
+        # the proof must use only what a system can see, or "recoverable" would be unfair
+        hidden = referenced_columns(inc.recovery) - set(data.VISIBLE_COLUMNS)
+        if hidden:
+            problems.append(f"recovery reads columns systems cannot see: {sorted(hidden)}")
+    if not inc.family:
+        problems.append("family is required")
     if inc.case_type == "representation" and not (inc.equivalence and inc.canonical):
         problems.append("a representation incident needs equivalence and canonical expressions")
     if not inc.counterexamples:
@@ -198,6 +223,25 @@ def check_injected(inj: Injected) -> list[str]:
             ok = rebuilt["ref"].astype(str) == rebuilt["rebuilt"].astype(str)
         if not ok.all():
             problems.append(f"recovery rebuilds only {int(ok.sum())}/{n} injected cells")
+
+    if inc.case_type == "unrecoverable":
+        # "Unrecoverable" cannot be proven, but a visible column that still holds the
+        # reference values would make it recoverable. Catches the common case only.
+        leaked = inj.window.merge(inj.truth, on="id")
+        for col in data.VISIBLE_COLUMNS:
+            if col in (inc.column, "id") or col not in leaked:
+                continue
+            ref_vals, other = leaked["ref"], leaked[col]
+            if pd.api.types.is_numeric_dtype(ref_vals) and pd.api.types.is_numeric_dtype(other):
+                same = (ref_vals - other).abs() <= NUMERIC_TOLERANCE
+            elif not pd.api.types.is_numeric_dtype(ref_vals) and not pd.api.types.is_numeric_dtype(other):
+                same = ref_vals.astype(str) == other.astype(str)
+            else:
+                continue
+            rate = float(same[ref_vals.notna()].mean()) if ref_vals.notna().any() else 0.0
+            if rate >= LEAK_EQUALITY:
+                problems.append(f"visible column {col} holds the reference value in {rate:.0%} of injected "
+                                f"rows, so this incident may be recoverable")
 
     if inc.case_type == "representation":
         not_equiv = con.execute(

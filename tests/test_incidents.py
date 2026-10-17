@@ -26,7 +26,7 @@ def ref():
 
 def make(**overrides):
     base = dict(incident_id="t", split="dev", window=DEV_WINDOW, column="loan_amnt",
-                case_type="unrecoverable", counterexamples="loan_amnt > 0")
+                case_type="unrecoverable", counterexamples="loan_amnt > 0", family="course_null")
     base.update(overrides)
     return Incident.from_dict(base)
 
