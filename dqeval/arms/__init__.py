@@ -32,6 +32,7 @@ class Case:
 class Proposal:
     candidate:     RuleCandidate | None
     error:         str | None = None
+    code:          str | None = None      # PySpark arms return code instead of a contract candidate
     llm_calls:     int = 0
     input_tokens:  int = 0
     output_tokens: int = 0

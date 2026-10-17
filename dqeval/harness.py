@@ -25,8 +25,9 @@ import pandas as pd
 from . import data, incidents, monitors, scoring
 from .arms import Arm, Case, NoChange, Proposal, QuarantineAll
 from .arms.rules import Rules
+from .arms.v1 import V1
 
-ARMS: dict[str, type[Arm]] = {"A0": NoChange, "A1": QuarantineAll, "A2": Rules}
+ARMS: dict[str, type[Arm]] = {"A0": NoChange, "A1": QuarantineAll, "A2": Rules, "A3-v1": V1}
 LLM_RUNS    = 5
 FREEZE_TAGS = {"S1": "eval-freeze-m1", "S2": "eval-freeze-m2"}
 PACKAGES    = ["duckdb", "sqlglot", "pandas", "numpy", "openai"]
@@ -74,12 +75,14 @@ def run(incident_path: Path, split: str, arm_names: list[str], out_dir: Path,
                 except Exception as e:                  # an arm crash is a failed run, not a harness crash
                     proposal = Proposal(None, error=f"{type(e).__name__}: {e}")
                 seconds = round(time.time() - started, 3)
-                score   = scoring.score(ref, inj, proposal.candidate, proposal.error)
+                score   = (scoring.score_code(ref, inj, proposal.code, proposal.error) if proposal.code is not None
+                           else scoring.score(ref, inj, proposal.candidate, proposal.error))
                 records.append({
                     "arm": arm.name, "incident_id": inc.incident_id, "run": run_idx,
                     "case_type": inc.case_type, "family": inc.family, "covered": inc.covered,
                     "column": inc.column, **score.to_dict(),
                     "candidate": proposal.candidate.to_dict() if proposal.candidate else None,
+                    "code": proposal.code,
                     "proposal_error": proposal.error, "llm_calls": proposal.llm_calls,
                     "input_tokens": proposal.input_tokens, "output_tokens": proposal.output_tokens,
                     "seconds": seconds, "trace": proposal.trace,

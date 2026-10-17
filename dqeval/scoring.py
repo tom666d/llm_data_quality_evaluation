@@ -1,14 +1,21 @@
 """
 scoring.py
-Scores one rule candidate on one injected incident (spec §7.1, §7.2). This is
+Scores one system output on one injected incident (spec §7.1, §7.2). This is
 the only evaluation module that reads ground truth.
 
-  Level 1  executes       passes the contract and applies without error
+  Level 1  executes       the candidate passes the contract (or the code runs) and
+                          produces the window, counterexample, and regression outputs
   Level 2  fixes window   meets the case type's requirement on the injected cells,
-                          changes no clean cell, and quarantines at most 1% of clean rows
+                          harms no clean data, and quarantines at most 1% of clean rows
   Level 3  safe to reuse  on the counterexamples and on the regression slice,
-                          changes no cell and quarantines at most 1% of rows
+                          harms nothing and quarantines at most 1% of rows
                           (each set checked on its own)
+
+"Harm" is any change to a clean cell of the target column, any change to another
+visible column, or a dropped clean row. A dropped injected row is not handled.
+A new boolean column ending in _quarantine is a quarantine flag; other new
+columns are ignored. Contract candidates (score) and PySpark code (score_code)
+go through the same checks (score_outputs).
 
 A run succeeds only if all three levels hold.
 """
@@ -17,8 +24,8 @@ from dataclasses import asdict, dataclass
 
 import pandas as pd
 
-from . import contract, data
-from .contract import QUARANTINE_COLUMN, RuleCandidate
+from . import contract, data, pyspark_runner
+from .contract import RuleCandidate
 from .incidents import EXPECTED_DECISION, NUMERIC_TOLERANCE, Injected, connect, referenced_columns
 
 FIX_SHARE            = 0.95   # share of injected cells that must be handled
@@ -44,9 +51,10 @@ class Score:
     injected_cells:         int = 0
     handled_cells:          int = 0
     clean_rows:             int = 0
-    clean_cells_changed:    int = 0
+    clean_cells_changed:    int = 0     # rows harmed: a clean cell changed, another column changed, or a clean row dropped
     clean_rows_quarantined: int = 0
-    # level 3 detail
+    rows_dropped:           int = 0
+    # level 3 detail (rows harmed / quarantined)
     counterexample_rows:             int = 0
     counterexample_cells_changed:    int = 0
     counterexample_rows_quarantined: int = 0
@@ -58,8 +66,8 @@ class Score:
         return asdict(self)
 
 
-def failed(error: str, candidate: RuleCandidate | None = None) -> Score:
-    return Score(False, False, False, False, error=error, decision=candidate.decision if candidate else None)
+def failed(error: str, decision: str | None = None) -> Score:
+    return Score(False, False, False, False, error=error, decision=decision)
 
 
 def same_values(a: pd.Series, b: pd.Series) -> pd.Series:
@@ -88,10 +96,35 @@ def regression_slice(ref: pd.DataFrame, inj: Injected) -> pd.DataFrame:
     return rows.drop(columns="_rank").head(REGRESSION_ROWS)
 
 
-def changes(before: pd.DataFrame, after: pd.DataFrame, column: str) -> tuple[pd.Series, pd.Series]:
-    """Per row of `before`: whether the candidate changed the column, and whether it quarantined the row."""
-    merged = before[["id", column]].merge(after[["id", column, QUARANTINE_COLUMN]], on="id", suffixes=("", "_out"))
-    return ~same_values(merged[column], merged[f"{column}_out"]), merged[QUARANTINE_COLUMN].astype(bool)
+def quarantine_flags(out: pd.DataFrame) -> pd.Series:
+    """The contract's _quarantine column, or any boolean column a code arm added that ends in _quarantine."""
+    names = [c for c in out.columns if c.endswith("_quarantine") and c not in data.VISIBLE_COLUMNS]
+    if not names:
+        return pd.Series(False, index=out.index)
+    return out[names].fillna(False).astype(bool).any(axis=1)
+
+
+def effects(before: pd.DataFrame, after: pd.DataFrame, column: str) -> pd.DataFrame:
+    """Per row of `before`, joined on id: the output value, and whether the row's target changed,
+    another visible column changed, the row was dropped, or the row was quarantined."""
+    after = after.drop_duplicates("id")
+    kept  = after[[c for c in after.columns if c in data.VISIBLE_COLUMNS]].assign(_flag=quarantine_flags(after).values)
+    rows  = before[data.VISIBLE_COLUMNS].merge(kept, on="id", how="left", suffixes=("", "_out"), indicator=True)
+    dropped = rows["_merge"] == "left_only"
+
+    other_changed = pd.Series(False, index=rows.index)
+    for c in data.VISIBLE_COLUMNS:
+        if c in ("id", column):
+            continue
+        other_changed |= ~same_values(rows[c], rows[f"{c}_out"]) if f"{c}_out" in rows else True
+    return pd.DataFrame({
+        "id":            rows["id"],
+        "out":           rows[f"{column}_out"],
+        "changed":       ~same_values(rows[column], rows[f"{column}_out"]) & ~dropped,
+        "other_changed": other_changed & ~dropped,
+        "dropped":       dropped,
+        "quarantined":   rows["_flag"].eq(True) & ~dropped,      # dropped rows have no flag (NaN)
+    })
 
 
 def standardized(inj: Injected, out_values: pd.Series, ref_values: pd.Series) -> pd.Series:
@@ -108,69 +141,93 @@ def standardized(inj: Injected, out_values: pd.Series, ref_values: pd.Series) ->
     return (flags["canonical"] & (same | flags["equivalent"])).set_axis(out_values.index)
 
 
+def score_outputs(inj: Injected, regression: pd.DataFrame, out_window: pd.DataFrame,
+                  out_cx: pd.DataFrame, out_reg: pd.DataFrame,
+                  decision: str | None = None, scope_uses_time: bool = False) -> Score:
+    inc, col = inj.incident, inj.incident.column
+
+    # ── Level 2: the incident window, compared with what the system saw and with the reference
+    eff      = effects(inj.window, out_window, col)
+    ref_vals = eff[["id"]].merge(inj.clean[["id", col]], on="id", how="left")[col]
+    injected = eff["id"].isin(inj.truth["id"])
+    clean    = ~injected
+
+    if inc.case_type == "recoverable":
+        handled = injected & ~eff["dropped"] & same_values(eff["out"], ref_vals)
+    elif inc.case_type == "representation":
+        handled = injected & ~eff["dropped"] & standardized(inj, eff["out"], ref_vals)
+    elif inc.case_type == "unrecoverable":
+        handled = injected & eff["quarantined"] & ~eff["changed"]
+    else:
+        handled = pd.Series(False, index=eff.index)
+
+    harmed = (clean & (eff["changed"] | eff["other_changed"] | eff["dropped"])) | (injected & eff["other_changed"])
+    n_injected, n_clean = int(injected.sum()), int(clean.sum())
+    clean_quarantined   = int((clean & eff["quarantined"]).sum())
+    enough_handled      = inc.case_type == "normal" or handled.sum() >= FIX_SHARE * n_injected
+    fixes_window        = enough_handled and not harmed.any() and clean_quarantined <= MAX_QUARANTINE_SHARE * n_clean
+
+    # ── Level 3: clean look-alikes and the regression slice, each on its own
+    def reuse(before: pd.DataFrame, after: pd.DataFrame) -> tuple[int, int, int]:
+        e = effects(before, after, col)
+        return len(e), int((e["changed"] | e["other_changed"] | e["dropped"]).sum()), int(e["quarantined"].sum())
+
+    cx_rows, cx_harmed, cx_quarantined     = reuse(inj.counterexamples, out_cx)
+    reg_rows, reg_harmed, reg_quarantined  = reuse(regression, out_reg)
+    safe_to_reuse = (cx_harmed == 0 and reg_harmed == 0
+                     and cx_quarantined <= MAX_QUARANTINE_SHARE * cx_rows
+                     and reg_quarantined <= MAX_QUARANTINE_SHARE * reg_rows)
+
+    return Score(
+        executes=True, fixes_window=bool(fixes_window), safe_to_reuse=bool(safe_to_reuse),
+        success=bool(fixes_window and safe_to_reuse), decision=decision,
+        decision_matches=decision == EXPECTED_DECISION[inc.case_type], scope_uses_time=scope_uses_time,
+        injected_cells=n_injected, handled_cells=int(handled.sum()), clean_rows=n_clean,
+        clean_cells_changed=int(harmed.sum()), clean_rows_quarantined=clean_quarantined,
+        rows_dropped=int(eff["dropped"].sum()),
+        counterexample_rows=cx_rows, counterexample_cells_changed=cx_harmed,
+        counterexample_rows_quarantined=cx_quarantined,
+        regression_rows=reg_rows, regression_cells_changed=reg_harmed, regression_rows_quarantined=reg_quarantined,
+    )
+
+
+def check_incident(inj: Injected) -> None:
+    if inj.incident.case_type != "normal" and inj.truth.empty:
+        # otherwise "0 handled >= 95% of 0 injected" would hold for any output
+        raise ValueError(f"incident {inj.incident.incident_id} injected no cells; it should not have passed the checker")
+
+
 def score(ref: pd.DataFrame, inj: Injected, candidate: RuleCandidate | None, error: str | None = None) -> Score:
-    """Scores one candidate. Pass candidate=None with an error when the system produced nothing usable."""
-    inc = inj.incident
-    if inc.case_type != "normal" and inj.truth.empty:
-        # otherwise "0 handled >= 95% of 0 injected" would hold for any candidate
-        raise ValueError(f"incident {inc.incident_id} injected no cells; it should not have passed the checker")
+    """Scores a contract candidate. Pass candidate=None with an error when the system produced nothing usable."""
+    check_incident(inj)
     if candidate is None:
         return failed(error or "no candidate")
-    problems = contract.validate(candidate, inc.column)
+    problems = contract.validate(candidate, inj.incident.column)
     if problems:
-        return failed("; ".join(problems), candidate)
+        return failed("; ".join(problems), candidate.decision)
 
-    visible = data.VISIBLE_COLUMNS
-    regression = regression_slice(ref, inj)
+    visible, regression = data.VISIBLE_COLUMNS, regression_slice(ref, inj)
     try:
         out_window = contract.apply(inj.window[visible], candidate)
         out_cx     = contract.apply(inj.counterexamples[visible], candidate)
         out_reg    = contract.apply(regression[visible], candidate)
     except Exception as e:
-        return failed(f"{type(e).__name__}: {str(e).splitlines()[0]}", candidate)
+        return failed(f"{type(e).__name__}: {str(e).splitlines()[0]}", candidate.decision)
+    uses_time = bool(candidate.scope) and "ingested_at" in referenced_columns(candidate.scope)
+    return score_outputs(inj, regression, out_window, out_cx, out_reg, candidate.decision, uses_time)
 
-    # ── Level 2: the incident window, compared with what the system saw and with the reference
-    col = inc.column
-    rows = (inj.window[["id", col]].rename(columns={col: "seen"})
-            .merge(inj.clean[["id", col]].rename(columns={col: "ref"}), on="id")
-            .merge(out_window[["id", col, QUARANTINE_COLUMN]].rename(columns={col: "out"}), on="id"))
-    injected    = rows["id"].isin(inj.truth["id"])
-    clean       = ~injected
-    changed     = ~same_values(rows["out"], rows["seen"])
-    quarantined = rows[QUARANTINE_COLUMN].astype(bool)
 
-    if inc.case_type == "recoverable":
-        handled = injected & same_values(rows["out"], rows["ref"])
-    elif inc.case_type == "representation":
-        handled = injected & standardized(inj, rows["out"], rows["ref"])
-    elif inc.case_type == "unrecoverable":
-        handled = injected & quarantined & ~changed
-    else:
-        handled = pd.Series(False, index=rows.index)
-
-    n_injected, n_clean = int(injected.sum()), int(clean.sum())
-    clean_changed       = int((clean & changed).sum())
-    clean_quarantined   = int((clean & quarantined).sum())
-    enough_handled      = inc.case_type == "normal" or handled.sum() >= FIX_SHARE * n_injected
-    fixes_window = (enough_handled and clean_changed == 0
-                    and clean_quarantined <= MAX_QUARANTINE_SHARE * n_clean)
-
-    # ── Level 3: clean look-alikes and the regression slice, each on its own
-    cx_changed, cx_quarantined   = changes(inj.counterexamples, out_cx, col)
-    reg_changed, reg_quarantined = changes(regression, out_reg, col)
-    safe_to_reuse = (not cx_changed.any() and not reg_changed.any()
-                     and cx_quarantined.sum() <= MAX_QUARANTINE_SHARE * len(cx_quarantined)
-                     and reg_quarantined.sum() <= MAX_QUARANTINE_SHARE * len(reg_quarantined))
-
-    return Score(
-        executes=True, fixes_window=bool(fixes_window), safe_to_reuse=bool(safe_to_reuse),
-        success=bool(fixes_window and safe_to_reuse), decision=candidate.decision,
-        decision_matches=candidate.decision == EXPECTED_DECISION[inc.case_type],
-        scope_uses_time=bool(candidate.scope) and "ingested_at" in referenced_columns(candidate.scope),
-        injected_cells=n_injected, handled_cells=int(handled.sum()), clean_rows=n_clean,
-        clean_cells_changed=clean_changed, clean_rows_quarantined=clean_quarantined,
-        counterexample_rows=len(cx_changed), counterexample_cells_changed=int(cx_changed.sum()),
-        counterexample_rows_quarantined=int(cx_quarantined.sum()),
-        regression_rows=len(reg_changed), regression_cells_changed=int(reg_changed.sum()),
-        regression_rows_quarantined=int(reg_quarantined.sum()),
-    )
+def score_code(ref: pd.DataFrame, inj: Injected, code: str | None, error: str | None = None) -> Score:
+    """Scores PySpark code by running it on copies of the window, counterexamples, and regression slice."""
+    check_incident(inj)
+    if not code:
+        return failed(error or "no code")
+    visible, regression = data.VISIBLE_COLUMNS, regression_slice(ref, inj)
+    outputs, err = pyspark_runner.run_code(code, {"window": inj.window[visible],
+                                                  "counterexamples": inj.counterexamples[visible],
+                                                  "regression": regression[visible]})
+    if err:
+        return failed(err)
+    if any("id" not in out.columns for out in outputs.values()):
+        return failed("the output lost the id column")
+    return score_outputs(inj, regression, outputs["window"], outputs["counterexamples"], outputs["regression"])

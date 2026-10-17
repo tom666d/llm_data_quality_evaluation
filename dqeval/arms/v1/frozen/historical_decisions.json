@@ -1,0 +1,86 @@
+[
+  {
+    "column": "loan_amnt",
+    "issue_type": "Null Spike",
+    "chosen_action": "Replace nulls with median",
+    "chosen_rationale": "Replacing null values with the median is a reliable method to maintain data distribution and reduce bias in analytics.",
+    "chosen_caveats": "This assumes that the distribution of loan amounts is not heavily skewed, which may not be true in all cases.",
+    "chosen_confidence": 85,
+    "detail_summary": "Null rate: 40% (40000/100000 rows)",
+    "pyspark_code": "df = df.fillna({'loan_amnt': df.approxQuantile('loan_amnt', [0.5], 0.0)[0]})",
+    "decision_type": "Approved",
+    "timestamp": "2026-04-20 08:27:05"
+  },
+  {
+    "column": "loan_amnt",
+    "issue_type": "Null Spike",
+    "chosen_action": "Decline changes",
+    "chosen_rationale": "No remediation will be applied, and this decision is recorded for auditing purposes.",
+    "chosen_caveats": "The issue with null values remains unresolved.",
+    "chosen_confidence": 100,
+    "detail_summary": "Null rate: 40% (40000/100000 rows)",
+    "pyspark_code": "# No change applied to df",
+    "decision_type": "Approved",
+    "timestamp": "2026-04-20 10:39:16"
+  },
+  {
+    "column": "loan_amnt",
+    "issue_type": "Null Spike",
+    "chosen_action": "Declined",
+    "chosen_rationale": "",
+    "chosen_caveats": "",
+    "chosen_confidence": 0,
+    "detail_summary": "Null rate: 40% (40000/100000 rows)",
+    "pyspark_code": "",
+    "decision_type": "Declined",
+    "timestamp": "2026-04-20 10:39:19"
+  },
+  {
+    "column": "loan_amnt",
+    "issue_type": "Null Spike",
+    "chosen_action": "Decline changes",
+    "chosen_rationale": "No remediation will be applied, and this decision is recorded for auditing purposes.",
+    "chosen_caveats": "The issue with null values remains unresolved.",
+    "chosen_confidence": 100,
+    "detail_summary": "Null rate: 40% (40000/100000 rows)",
+    "pyspark_code": "# No change applied to df",
+    "decision_type": "Approved",
+    "timestamp": "2026-04-20 10:39:22"
+  },
+  {
+    "column": "loan_amnt",
+    "issue_type": "Null Spike",
+    "chosen_action": "Replace nulls with median",
+    "chosen_rationale": "Replacing null values with the median is a reliable method to maintain data distribution and reduce bias in analytics.",
+    "chosen_caveats": "This assumes that the distribution of loan amounts is not heavily skewed, which may not be true in all cases.",
+    "chosen_confidence": 85,
+    "detail_summary": "Null rate: 40% (40000/100000 rows)",
+    "pyspark_code": "df = df.fillna(df.approxQuantile('loan_amnt', [0.5], 0.01)[0], subset=['loan_amnt'])",
+    "decision_type": "Approved",
+    "timestamp": "2026-04-20 13:51:21"
+  },
+  {
+    "column": "loan_amnt",
+    "issue_type": "Null Spike",
+    "chosen_action": "Decline changes",
+    "chosen_rationale": "No remediation will be applied, and this decision is recorded for auditing purposes.",
+    "chosen_caveats": "The issue with null values remains unresolved.",
+    "chosen_confidence": 100,
+    "detail_summary": "Null rate: 40% (40000/100000 rows)",
+    "pyspark_code": "# No change applied to df",
+    "decision_type": "Approved",
+    "timestamp": "2026-04-20 13:51:40"
+  },
+  {
+    "column": "loan_amnt",
+    "issue_type": "Null Spike",
+    "chosen_action": "Replace nulls with median",
+    "chosen_rationale": "Replacing null values with the median is a reliable method to maintain data distribution and reduce bias in analytics.",
+    "chosen_caveats": "This assumes that the distribution of loan amounts is not heavily skewed, which may not be true in all cases.",
+    "chosen_confidence": 85,
+    "detail_summary": "Null rate: 40% (40000/100000 rows)",
+    "pyspark_code": "df = df.fillna(df.approxQuantile('loan_amnt', [0.5], 0.01)[0], subset=['loan_amnt'])",
+    "decision_type": "Approved",
+    "timestamp": "2026-04-20 13:51:42"
+  }
+]
