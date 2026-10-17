@@ -86,12 +86,13 @@ def summarize(df: pd.DataFrame) -> str:
     headline = []
     for arm in arms:
         runs, incs = df[df["arm"] == arm], inc[inc["arm"] == arm]
-        reasons = runs.apply(failure, axis=1).dropna()
+        arm_reasons = runs.apply(failure, axis=1).dropna()
         headline.append({
             "method": f"{NAMES.get(arm, arm)} [{arm}]",
             "success rate": f"{incs['rate'].mean():.2f}",
-            "main failure": f"{reasons.mode().iloc[0]} ({(reasons == reasons.mode().iloc[0]).sum()}/{len(runs)} runs)"
-                            if not reasons.empty else "-",
+            "main failure": (f"{arm_reasons.mode().iloc[0]} "
+                             f"({(arm_reasons == arm_reasons.mode().iloc[0]).sum()}/{len(runs)} runs)")
+                            if not arm_reasons.empty else "-",
             "tokens / run": f"{(runs['input_tokens'] + runs['output_tokens']).mean():,.0f}",
             "seconds / run": f"{runs['seconds'].mean():.1f}",
         })

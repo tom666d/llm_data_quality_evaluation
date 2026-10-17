@@ -88,6 +88,8 @@ def test_harness_writes_records_and_report(tmp_path, stationary_ref):
     assert (tmp_path / "out" / "run.json").exists()
     text = report.summarize(report.load(tmp_path / "out"))
     assert "## Success by arm" in text and "| A2 |" in text
+    failures = text.split("## Why runs failed")[1].split("##")[0]
+    assert all(f"| {arm} |" in failures for arm in ["A0", "A1", "A2"])     # one row per arm, not one arm's reasons
 
 
 def test_held_out_split_needs_the_freeze_tag(monkeypatch, tmp_path):
