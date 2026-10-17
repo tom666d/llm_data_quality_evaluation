@@ -9,9 +9,12 @@
 ## What it does today
 
 1. **Detect.** Spark Structured Streaming reads loan records from Kafka and checks every 10-second micro-batch for null spikes, statistical outliers, and mixed date formats.
-2. **Gather evidence.** For each new `(column, issue_type)` pair, the detector computes facts from the batch for the agents. It finds columns that match a null column and can backfill it, sentinel values repeated among outliers, and date values that fall outside the expected range.
-3. **Diagnose.** Agent 1 (GPT-4o-mini) uses that evidence to propose a likely root cause and business impact.
-4. **Remediate.** Agent 2 writes two remediation options with PySpark code. A rule-based critic checks the output format and sends feedback for a retry (up to 2 times).
+2. **Gather evidence.** For each new `(column, issue_type)` pair, the detector computes observations from the batch, as counts and rates only, with no conclusions:
+   - for null values, how other columns are filled in the affected rows and which columns equal the null column;
+   - for outliers, how concentrated the outlier values are;
+   - for dates, the range of each date format.
+3. **Diagnose.** Agent 1 (GPT-4o-mini) states a root-cause hypothesis and the business impact, and names the observations that support it.
+4. **Remediate.** Agent 2 writes two remediation options with PySpark code. It is told to set unrecoverable values to null rather than invent them. A static critic checks that each snippet parses and assigns `df`, sends feedback for a retry (up to 2 times), and records the final pass/fail with the suggestions.
 
 Recurring issues are logged every batch, but the LLM runs only once per unique `(column, issue_type)` pair in a session.
 
@@ -33,7 +36,7 @@ detector.py  (Spark Structured Streaming, 10s micro-batches)
 suggester.py
   ├── Agent 1   root cause + business impact, grounded in the evidence
   ├── Agent 2   2 remediation options with PySpark code
-  └── Critic    format check, retry with feedback
+  └── Critic    static check (parses, assigns df), retry with feedback
         ▼
 data/issues_with_suggestions.json
 ```

@@ -5,13 +5,15 @@ Two-agent LLM pipeline for data quality remediation suggestions.
 Flow (per issue):
   Agent 1  → root cause + business impact
   Agent 2  → two remediation options with PySpark fix code
-  Critic   → format check; on failure, feedback goes back to Agent 2 (max 2 retries)
+  Critic   → static check (format, syntax, assigns df); on failure, feedback goes
+             back to Agent 2 (max 2 retries). The final pass/fail is recorded.
 
 Called by detector.py with only the newly detected issues:
   run_suggester(new_issues)
 Results are appended to data/issues_with_suggestions.json.
 """
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -82,8 +84,8 @@ Evidence computed from the batch:
 {evidence_block(issue)}
 
 Instructions:
-- Base the root cause on the evidence. If it points to a specific mechanism
-  (a placeholder value, a field dropped upstream, values outside the expected range), name it.
+- The evidence lists observations, not conclusions. State the most likely root cause
+  as a hypothesis and name the observation(s) that support it.
 - Do NOT simply restate the issue type.
 - business_impact: downstream effect on analytics, reporting, or modeling.
 - Keep both fields to 1-2 short sentences.
@@ -150,14 +152,17 @@ Requirements:
 1. Generate exactly {NUM_OPTIONS} remediation suggestions, best option first.
 2. Each suggestion must include: option, action, rationale, caveats, pyspark_code.
 3. Let the evidence drive the fix: prefer recovering true values (e.g. from a matching column)
-   or invalidating placeholder values over generic statistical imputation.
+   over generic statistical imputation.
+4. If the true values cannot be recovered from the data, set them to null rather than
+   inventing, imputing, or reformatting them.
 
 Field rules:
 - option: integer (1 or 2)
 - action: short remediation title
 - rationale: 1-2 concise sentences
 - caveats: 1 concise sentence
-- pyspark_code: runnable PySpark code that reassigns a DataFrame named df (not pseudo-code)
+- pyspark_code: runnable PySpark code, including every import it uses, that reassigns
+  a DataFrame named df (not pseudo-code)
 
 Return JSON only, exactly:
 {{
@@ -187,17 +192,26 @@ def critic_check(remediation: dict[str, Any]) -> tuple[bool, str]:
         return False, f"Expected {NUM_OPTIONS} suggestions, got {len(suggestions)}"
     for s in suggestions:
         num  = s.get("option", "?")
-        code = s.get("pyspark_code", "")
+        code = str(s.get("pyspark_code") or "")
         if not code.strip():
             return False, f"Option {num} missing pyspark_code"
-        if "df" not in code:
-            return False, f"Option {num} pyspark_code does not reference 'df'"
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            return False, f"Option {num} pyspark_code has a syntax error: {e.msg} (line {e.lineno})"
+        assigns_df = any(
+            isinstance(node, ast.Name) and node.id == "df" and isinstance(node.ctx, ast.Store)
+            for node in ast.walk(tree)
+        )
+        if not assigns_df:
+            return False, f"Option {num} pyspark_code never assigns its result to df"
     return True, "OK"
 
 
 def generate_remediation_with_critic(
     client, issue, diagnosis, max_retries=2
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Returns (remediation, critic_status); the status records whether the final output passed."""
     feedback = ""
     for attempt in range(max_retries + 1):
         result = generate_remediation(client, issue, diagnosis, feedback)
@@ -207,10 +221,10 @@ def generate_remediation_with_critic(
         if passed:
             if attempt > 0:
                 print(f"  Critic passed on attempt {attempt + 1}")
-            return result
+            return result, {"passed": True, "attempts": attempt + 1, "feedback": feedback}
         print(f"  Critic failed (attempt {attempt + 1}): {feedback}")
-    print("  Critic: max retries reached, returning last result")
-    return result
+    print("  Critic: max retries reached, returning last result marked as failed")
+    return result, {"passed": False, "attempts": max_retries + 1, "feedback": feedback}
 
 
 # =========================
@@ -246,13 +260,18 @@ def run_suggester(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
         print(f"  Agent 1 done -> priority={priority_score}, affected={affected_pct}%")
 
         # Agent 2 + Critic: remediation suggestions
-        remediation_result = generate_remediation_with_critic(client, issue, diagnosis_result)
+        remediation_result, critic_status = generate_remediation_with_critic(
+            client, issue, diagnosis_result
+        )
         print(f"  Agent 2 done -> {len(remediation_result.get('suggestions', []))} suggestion(s)\n")
 
         new_results.append({
             "input":       issue,
             "diagnosis":   diagnosis_result,
-            "remediation": {"suggestions": remediation_result.get("suggestions", [])},
+            "remediation": {
+                "suggestions": remediation_result.get("suggestions", []),
+                "critic":      critic_status,
+            },
         })
 
     # ── Append to existing results and save ───────────────────────────────────

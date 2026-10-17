@@ -68,10 +68,11 @@ DATA_DIR     = PROJECT_ROOT / "data"
 
 
 # ── Auto-trigger LLM (new issues only) ───────────────────────────────────────
-def trigger_suggester(new_issues: list):
+def trigger_suggester(new_issues: list) -> bool:
     """
     Calls run_suggester() with only the newly detected issues, avoiding
     redundant LLM calls on issues that were already handled.
+    Returns True on success, so the caller can retry failed issues later.
     """
     llm_dir = PROJECT_ROOT / "src" / "llm"
     if str(llm_dir) not in sys.path:
@@ -82,52 +83,65 @@ def trigger_suggester(new_issues: list):
         print(f"  🤖 Triggering LLM for {len(new_issues)} new issue(s) ...")
         run_suggester(new_issues)
         print("  ✅ LLM suggestions generated and appended")
+        return True
     except Exception as e:
         print(f"  ⚠️  Suggester failed (non-fatal): {e}")
+        return False
 
 
 # ── Evidence for the LLM ──────────────────────────────────────────────────────
-# Facts computed from the batch, so the agents reason from the data instead of
-# only a column name and a few samples. Computed for NEW issues only, since
-# those are the only ones sent to the LLM.
+# Observations computed from the batch: counts and rates only, no conclusions.
+# Interpreting them (root cause, fix) is the agents' job. Computed for NEW
+# issues only, since those are the only ones sent to the LLM.
 def null_spike_evidence(batch_df: DataFrame, col_name: str) -> list[str]:
-    evidence  = []
-    others    = [f for f in batch_df.schema.fields if f.name != col_name]
-    null_rows = batch_df.filter(F.col(col_name).isNull())
+    evidence = []
+    others   = [f.name for f in batch_df.schema.fields if f.name != col_name]
+    is_null  = F.col(col_name).isNull()
 
-    # Share of null rows in which each other column is still populated
-    present = null_rows.agg(*[
-        F.avg(F.col(f.name).isNotNull().cast("int")).alias(f.name) for f in others
+    # Fill rate of every other column, in rows where col_name is null vs. present
+    fill = batch_df.agg(*[
+        agg
+        for c in others
+        for agg in (
+            F.avg(F.when(is_null,  F.col(c).isNotNull().cast("int"))).alias(f"{c}__null"),
+            F.avg(F.when(~is_null, F.col(c).isNotNull().cast("int"))).alias(f"{c}__present"),
+        )
     ]).first().asDict()
-    co_missing = [name for name, rate in present.items() if rate is not None and rate < 0.5]
-    if co_missing:
+    in_null_rows = {c: fill[f"{c}__null"] for c in others}
+
+    low = [
+        f"{c} {rate:.0%} (vs {_pct(fill[f'{c}__present'])} where {col_name} is present)"
+        for c, rate in in_null_rows.items() if rate < 0.95
+    ]
+    if low:
         evidence.append(
-            f"Rows missing {col_name} are mostly missing {', '.join(co_missing)} too, "
-            f"which points to whole records being lost rather than one field."
+            f"In rows where {col_name} is null, these columns are under 95% filled: "
+            f"{', '.join(low)}. All other columns are at least 95% filled."
         )
     else:
         evidence.append(
-            f"Rows missing {col_name} still have every other field populated, "
-            f"so the loss is isolated to this column."
+            f"In rows where {col_name} is null, every other column is at least "
+            f"{min(in_null_rows.values()):.0%} filled."
         )
 
-    # Same-type columns that match this one wherever both are present → backfill sources
+    # Same-type columns that equal col_name wherever both are present
     col_type  = batch_df.schema[col_name].dataType
-    same_type = [f.name for f in others if f.dataType == col_type]
+    same_type = [f.name for f in batch_df.schema.fields if f.name in others and f.dataType == col_type]
     if same_type:
         match = batch_df.agg(*[
-            F.avg((F.col(col_name) == F.col(c)).cast("int")).alias(c) for c in same_type
+            agg
+            for c in same_type
+            for agg in (
+                F.avg((F.col(col_name) == F.col(c)).cast("int")).alias(f"{c}__rate"),
+                F.count(F.col(col_name) == F.col(c)).alias(f"{c}__n"),
+            )
         ]).first().asDict()
         for c in same_type:
-            if match[c] is not None and match[c] >= 0.95:
-                note = (
-                    "candidate backfill source" if present[c] >= 0.8
-                    else "could recover only part of the missing values"
-                )
+            rate, n = match[f"{c}__rate"], match[f"{c}__n"]
+            if rate is not None and rate >= 0.95:
                 evidence.append(
-                    f"{c} equals {col_name} in {match[c]:.0%} of rows where both are present, "
-                    f"and is populated in {present[c]:.0%} of rows where {col_name} is null "
-                    f"({note})."
+                    f"{c} equals {col_name} in {rate:.0%} of the {n} rows where both are present, "
+                    f"and is filled in {in_null_rows[c]:.0%} of rows where {col_name} is null."
                 )
     return evidence
 
@@ -139,30 +153,27 @@ def outlier_evidence(
     outliers = batch_df.filter((F.col(col_name) < lower) | (F.col(col_name) > upper))
     evidence = [f"The middle 50% of {col_name} lies between {q1:,} and {q3:,}."]
 
-    top = outliers.groupBy(col_name).count().orderBy(F.desc("count")).first()
-    if top["count"] / outlier_count >= 0.5:
-        value, n = top[col_name], top["count"]
+    top   = outliers.groupBy(col_name).count().orderBy(F.desc("count")).first()
+    value = top[col_name]
+    evidence.append(
+        f"The most common outlier value is {value:,}: {top['count']} of {outlier_count} "
+        f"outliers ({top['count'] / outlier_count:.0%})."
+    )
+
+    rest = outliers.filter(F.col(col_name) != value).agg(
+        F.count(col_name).alias("n"), F.countDistinct(col_name).alias("d"),
+        F.min(col_name).alias("lo"), F.max(col_name).alias("hi"),
+    ).first()
+    if rest["n"]:
         evidence.append(
-            f"{n} of {outlier_count} outliers ({n / outlier_count:.0%}) are the exact value {value:,}; "
-            f"a repeated exact value suggests a placeholder or sentinel, not genuine extremes."
-        )
-        rest = outliers.filter(F.col(col_name) != value).agg(
-            F.count(col_name).alias("n"), F.min(col_name).alias("lo"), F.max(col_name).alias("hi"),
-        ).first()
-        if rest["n"]:
-            evidence.append(
-                f"The other {rest['n']} outliers range from {rest['lo']:,} to {rest['hi']:,} "
-                f"and may be legitimate values."
-            )
-    else:
-        stats = outliers.agg(
-            F.countDistinct(col_name).alias("d"), F.min(col_name).alias("lo"), F.max(col_name).alias("hi"),
-        ).first()
-        evidence.append(
-            f"Outliers are spread across {stats['d']} distinct values from {stats['lo']:,} "
-            f"to {stats['hi']:,}, with no single repeated value."
+            f"The other {rest['n']} outliers take {rest['d']} distinct value(s) "
+            f"from {rest['lo']:,} to {rest['hi']:,}."
         )
     return evidence
+
+
+def _pct(rate: float | None) -> str:
+    return "n/a" if rate is None else f"{rate:.0%}"
 
 
 def _parse_date(value: str, fmt: str) -> datetime | None:
@@ -191,11 +202,11 @@ def date_format_evidence(batch_df: DataFrame, iso_count: int, us_count: int) -> 
     majority, minority = (MMM_YYYY[0], MM_YYYY[0]) if iso_count >= us_count else (MM_YYYY[0], MMM_YYYY[0])
     if dates[majority] and dates[minority]:
         lo, hi = dates[majority][0], dates[majority][-1]
-        if not any(lo <= d <= hi for d in dates[minority]):
-            evidence.append(
-                f"None of the {minority} dates fall within the {majority} range, "
-                f"so they are not the same dates written in another format."
-            )
+        inside = sum(lo <= d <= hi for d in dates[minority])
+        evidence.append(
+            f"{inside} of {len(dates[minority])} distinct {minority} value(s) fall within "
+            f"the {majority} range ({lo:%b %Y} to {hi:%b %Y})."
+        )
     return evidence
 
 
@@ -243,7 +254,6 @@ def detect_issues_in_batch(batch_df: DataFrame, batch_id: int):
             if key not in KNOWN_ISSUES:
                 issue["evidence"] = null_spike_evidence(batch_df, col_name)
                 new_issues.append(issue)
-                KNOWN_ISSUES.add(key)
                 print(f"  🆕 NEW  Null Spike       | {col_name} | null rate = {null_rate:.0%}")
             else:
                 print(f"  ♻️  SEEN Null Spike       | {col_name} | null rate = {null_rate:.0%} — LLM skipped")
@@ -301,7 +311,6 @@ def detect_issues_in_batch(batch_df: DataFrame, batch_id: int):
                     batch_df, col_name, q1, q3, lower, upper, outlier_count
                 )
                 new_issues.append(issue)
-                KNOWN_ISSUES.add(key)
                 print(f"  🆕 NEW  Outlier          | {col_name} | {outlier_count} outliers ({outlier_rate:.1%})")
             else:
                 print(f"  ♻️  SEEN Outlier          | {col_name} | {outlier_count} outliers ({outlier_rate:.1%}) — LLM skipped")
@@ -334,17 +343,24 @@ def detect_issues_in_batch(batch_df: DataFrame, batch_id: int):
             if key not in KNOWN_ISSUES:
                 issue["evidence"] = date_format_evidence(batch_df, iso_count, us_count)
                 new_issues.append(issue)
-                KNOWN_ISSUES.add(key)
                 print(f"  🆕 NEW  Format Mismatch  | issue_d | mixed date formats")
             else:
                 print(f"  ♻️  SEEN Format Mismatch  | issue_d — LLM skipped")
 
-    # ── Write all issues to JSON ──────────────────────────────────────────────
+    # ── Quality score (based on the current batch only; written for clean batches too) ──
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    deductions    = {"HIGH": 8, "MEDIUM": 4, "LOW": 2}
+    raw_score     = 100 - sum(deductions.get(i["severity"], 4) for i in issues)
+    quality_score = max(0, min(100, raw_score))
+
+    with open(DATA_DIR / "quality_score.json", "w", encoding="utf-8") as f:
+        json.dump({"quality_score": quality_score, "batch_id": batch_id}, f)
+
     if not issues:
-        print(f"  ✅ Batch {batch_id} — no issues detected")
+        print(f"  ✅ Batch {batch_id} — no issues detected | quality score: {quality_score}/100")
         return
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # ── Append issues to the rolling log ──────────────────────────────────────
     issues_path = DATA_DIR / "issues_output.json"
 
     existing = []
@@ -360,23 +376,21 @@ def detect_issues_in_batch(batch_df: DataFrame, batch_id: int):
     with open(issues_path, "w", encoding="utf-8") as f:
         json.dump(combined, f, indent=2, ensure_ascii=False)
 
-    # Quality score based on the current batch only
-    deductions    = {"HIGH": 8, "MEDIUM": 4, "LOW": 2}
-    raw_score     = 100 - sum(deductions.get(i["severity"], 4) for i in issues)
-    quality_score = max(0, min(100, raw_score))
-
-    with open(DATA_DIR / "quality_score.json", "w", encoding="utf-8") as f:
-        json.dump({"quality_score": quality_score, "batch_id": batch_id}, f)
-
     print(f"  ✅ {len(issues)} issue(s) written | quality score: {quality_score}/100")
-    print(f"  📋 Known issues registry: {len(KNOWN_ISSUES)} unique (column, type) pair(s)")
 
     # ── Trigger LLM only for genuinely new issues ─────────────────────────────
+    # An issue becomes "known" only after the LLM succeeds, so a failed call
+    # (e.g. API outage) is retried on the next batch instead of being dropped.
     if new_issues:
         print(f"  🆕 {len(new_issues)} new issue(s) — triggering LLM ...")
-        trigger_suggester(new_issues)
+        if trigger_suggester(new_issues):
+            KNOWN_ISSUES.update((i["column"], i["issue_type"]) for i in new_issues)
+        else:
+            print(f"  🔁 {len(new_issues)} issue(s) will be retried on the next batch")
     else:
         print(f"  ⏭️  All issues already known — LLM skipped")
+
+    print(f"  📋 Known issues registry: {len(KNOWN_ISSUES)} unique (column, type) pair(s)")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
