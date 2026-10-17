@@ -38,6 +38,10 @@ Rules:
   functions, or tables. If you need a number from the data, such as a threshold, write it as a constant.
 - Columns you may use: {columns}.
 - Touch only the rows that are wrong; every other row must stay exactly as it is.
+- If another column can rebuild the values (see "Baseline columns equal to it", or a value derivable
+  from another column), RESTORE from it instead of quarantining.
+- If the values look like real data that is merely unusual, spread over every feed, choose KEEP.
+- When rewriting values, use exactly the encoding the baseline uses, including spaces and capitalization.
 """
 
 
