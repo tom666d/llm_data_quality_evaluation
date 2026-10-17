@@ -298,6 +298,11 @@ The rules were written **after** those failures had been seen. This result motiv
 - **§5.3, covered vs. uncovered.** These are now defined by mechanism family, relative to the three course-project mechanisms. The old definition used the dev set, which does not exist yet when the held-out sets are written.
 - **§7.1, regression slice.** It is now taken from windows after the incident's own window, instead of from "outside every incident window". With at least 20 incidents and only 12 to 13 windows per held-out split, the old rule left no rows. Rows after the incident's window also match what reuse safety asks: will the rule harm later batches?
 
+**2026-10-17, reporting additions** (success is unchanged):
+- **§7.3.** Each record also carries two fields.
+  - `decision_matches`: whether the decision is the one §5.1 names for the case type.
+  - `scope_uses_time`: whether the scope reads `ingested_at`. A rule bounded to the incident's time range passes level 3 vacuously, because the counterexamples and the regression slice lie outside that range. Such successes are therefore reported separately, as one-off fixes rather than reusable rules.
+
 **Clarifications made while implementing the scorer** (these record how ambiguous wording is read; nothing changes):
 - **§7.1, level 3.** The 1% quarantine allowance applies to the counterexamples and to the regression slice separately. Counterexamples are deliberate look-alikes, so pooling them into the 5,000-row slice would hide a scope that is too broad.
 - **§7.2, representation-only.** An injected cell counts as standardized when the output matches the incident's `canonical` expression and either equals the reference value or satisfies `equivalence`. `equivalence` is written for the injected encoding, so it is evaluated with DuckDB `TRY()`; an output it cannot parse counts as not equivalent rather than as an error.

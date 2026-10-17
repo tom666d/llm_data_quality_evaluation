@@ -154,3 +154,13 @@ def test_incident_without_injected_cells_is_rejected(stationary_ref):
                      counterexamples="true")
     with pytest.raises(ValueError, match="injected no cells"):
         run(stationary_ref, empty, "KEEP")
+
+
+def test_reporting_flags(stationary_ref, sentinel):
+    targeted = run(stationary_ref, sentinel, "QUARANTINE", "annual_inc = 9999999")
+    assert targeted.decision_matches and not targeted.scope_uses_time
+    start, end = sentinel.window["ingested_at"].min(), sentinel.window["ingested_at"].max()
+    bounded = run(stationary_ref, sentinel, "QUARANTINE",
+                  f"annual_inc = 9999999 AND ingested_at BETWEEN TIMESTAMP '{start}' AND TIMESTAMP '{end}'")
+    assert bounded.success and bounded.scope_uses_time
+    assert not run(stationary_ref, sentinel, "KEEP").decision_matches

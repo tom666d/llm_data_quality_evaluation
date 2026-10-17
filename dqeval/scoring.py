@@ -19,7 +19,7 @@ import pandas as pd
 
 from . import contract, data
 from .contract import QUARANTINE_COLUMN, RuleCandidate
-from .incidents import NUMERIC_TOLERANCE, Injected, connect
+from .incidents import EXPECTED_DECISION, NUMERIC_TOLERANCE, Injected, connect, referenced_columns
 
 FIX_SHARE            = 0.95   # share of injected cells that must be handled
 MAX_QUARANTINE_SHARE = 0.01   # share of clean rows that may be quarantined
@@ -34,6 +34,12 @@ class Score:
     success:       bool
     error:         str | None = None
     decision:      str | None = None
+    # reporting only, not part of success:
+    #   decision_matches  the decision is the one spec §5.1 names for the case type
+    #   scope_uses_time   the scope reads ingested_at; such a rule is a one-off fix for a time range,
+    #                     and level 3 says little about it because the check rows lie outside that range
+    decision_matches: bool = False
+    scope_uses_time:  bool = False
     # level 2 detail
     injected_cells:         int = 0
     handled_cells:          int = 0
@@ -159,6 +165,8 @@ def score(ref: pd.DataFrame, inj: Injected, candidate: RuleCandidate | None, err
     return Score(
         executes=True, fixes_window=bool(fixes_window), safe_to_reuse=bool(safe_to_reuse),
         success=bool(fixes_window and safe_to_reuse), decision=candidate.decision,
+        decision_matches=candidate.decision == EXPECTED_DECISION[inc.case_type],
+        scope_uses_time=bool(candidate.scope) and "ingested_at" in referenced_columns(candidate.scope),
         injected_cells=n_injected, handled_cells=int(handled.sum()), clean_rows=n_clean,
         clean_cells_changed=clean_changed, clean_rows_quarantined=clean_quarantined,
         counterexample_rows=len(cx_changed), counterexample_cells_changed=int(cx_changed.sum()),
