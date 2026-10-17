@@ -5,8 +5,9 @@ Two-agent LLM pipeline for data quality remediation suggestions.
 Flow (per issue):
   Agent 1  → root cause + business impact
   Agent 2  → two remediation options with PySpark fix code
-  Critic   → static check (format, syntax, assigns df); on failure, feedback goes
-             back to Agent 2 (max 2 retries). The final pass/fail is recorded.
+  Critic   → static pre-check (format, syntax, assigns df), NOT a validation of the
+             fix; on failure, feedback goes back to Agent 2 (max 2 retries).
+             The final pass/fail is recorded.
 
 Called by detector.py with only the newly detected issues:
   run_suggester(new_issues)
@@ -153,8 +154,9 @@ Requirements:
 2. Each suggestion must include: option, action, rationale, caveats, pyspark_code.
 3. Let the evidence drive the fix: prefer recovering true values (e.g. from a matching column)
    over generic statistical imputation.
-4. If the true values cannot be recovered from the data, set them to null rather than
-   inventing, imputing, or reformatting them.
+4. If the true values cannot be recovered from the data, do not overwrite them: no nulling,
+   imputing, or reformatting. Instead, keep the original values and flag the affected rows in a
+   new boolean column named <column>_quarantine so they can be held back for human review.
 
 Field rules:
 - option: integer (1 or 2)
@@ -231,7 +233,8 @@ def generate_remediation_with_critic(
 # Main pipeline
 # =========================
 def run_suggester(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Runs the agent pipeline on `issues` and appends the results to OUTPUT_PATH."""
+    """Runs the agent pipeline on `issues`, appends the results to OUTPUT_PATH,
+    and returns the new results (one per issue, including critic status)."""
     load_dotenv(PROJECT_ROOT / ".env")
 
     api_key = os.getenv("OPENAI_API_KEY")
@@ -291,4 +294,4 @@ def run_suggester(issues: list[dict[str, Any]]) -> list[dict[str, Any]]:
         json.dump(combined_results, f, indent=2, ensure_ascii=False)
 
     print(f"[OK] issues_with_suggestions.json saved ({len(combined_results)} total record(s))")
-    return combined_results
+    return new_results

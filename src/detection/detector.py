@@ -40,9 +40,14 @@ MMM_YYYY = ("MMM-YYYY", r"^[A-Za-z]{3}-\d{4}$", "%b-%Y")
 MM_YYYY  = ("MM/YYYY",  r"^\d{2}/\d{4}$",       "%m/%Y")
 
 # ── Known issues registry ─────────────────────────────────────────────────────
-# Stores (column, issue_type) tuples seen during this streaming session.
+# (column, issue_type) pairs that no longer go to the LLM this session: either
+# their suggestions passed the critic, or MAX_LLM_ATTEMPTS were used up.
 # LLM is only triggered when a NEW combination appears.
 KNOWN_ISSUES: set[tuple[str, str]] = set()
+
+# Caps retries so an issue whose suggestions keep failing can't spend API budget every batch
+MAX_LLM_ATTEMPTS = 3
+LLM_ATTEMPTS: dict[tuple[str, str], int] = {}
 
 # ── Schema ────────────────────────────────────────────────────────────────────
 LOAN_SCHEMA = StructType([
@@ -68,11 +73,12 @@ DATA_DIR     = PROJECT_ROOT / "data"
 
 
 # ── Auto-trigger LLM (new issues only) ───────────────────────────────────────
-def trigger_suggester(new_issues: list) -> bool:
+def trigger_suggester(new_issues: list) -> set[tuple[str, str]]:
     """
     Calls run_suggester() with only the newly detected issues, avoiding
     redundant LLM calls on issues that were already handled.
-    Returns True on success, so the caller can retry failed issues later.
+    Returns the (column, issue_type) keys whose suggestions passed the critic;
+    an exception or a critic failure leaves the issue eligible for retry.
     """
     llm_dir = PROJECT_ROOT / "src" / "llm"
     if str(llm_dir) not in sys.path:
@@ -81,12 +87,17 @@ def trigger_suggester(new_issues: list) -> bool:
     try:
         from suggester import run_suggester
         print(f"  🤖 Triggering LLM for {len(new_issues)} new issue(s) ...")
-        run_suggester(new_issues)
-        print("  ✅ LLM suggestions generated and appended")
-        return True
+        results = run_suggester(new_issues)
     except Exception as e:
         print(f"  ⚠️  Suggester failed (non-fatal): {e}")
-        return False
+        return set()
+
+    passed = {
+        (r["input"]["column"], r["input"]["issue_type"])
+        for r in results if r["remediation"]["critic"]["passed"]
+    }
+    print(f"  ✅ LLM suggestions appended | {len(passed)}/{len(results)} passed the critic")
+    return passed
 
 
 # ── Evidence for the LLM ──────────────────────────────────────────────────────
@@ -379,14 +390,25 @@ def detect_issues_in_batch(batch_df: DataFrame, batch_id: int):
     print(f"  ✅ {len(issues)} issue(s) written | quality score: {quality_score}/100")
 
     # ── Trigger LLM only for genuinely new issues ─────────────────────────────
-    # An issue becomes "known" only after the LLM succeeds, so a failed call
-    # (e.g. API outage) is retried on the next batch instead of being dropped.
+    # An issue becomes "known" only once its suggestions pass the critic. Otherwise
+    # (API error or critic failure) it is retried if it recurs in a later batch,
+    # up to MAX_LLM_ATTEMPTS. One-off issues that never recur are not retried yet.
     if new_issues:
         print(f"  🆕 {len(new_issues)} new issue(s) — triggering LLM ...")
-        if trigger_suggester(new_issues):
-            KNOWN_ISSUES.update((i["column"], i["issue_type"]) for i in new_issues)
-        else:
-            print(f"  🔁 {len(new_issues)} issue(s) will be retried on the next batch")
+        passed = trigger_suggester(new_issues)
+        for issue in new_issues:
+            key = (issue["column"], issue["issue_type"])
+            if key in passed:
+                KNOWN_ISSUES.add(key)
+                continue
+            LLM_ATTEMPTS[key] = LLM_ATTEMPTS.get(key, 0) + 1
+            if LLM_ATTEMPTS[key] >= MAX_LLM_ATTEMPTS:
+                KNOWN_ISSUES.add(key)
+                print(f"  🛑 {key[0]} / {key[1]}: no valid suggestion after "
+                      f"{MAX_LLM_ATTEMPTS} attempts — left for manual review")
+            else:
+                print(f"  🔁 {key[0]} / {key[1]}: will retry if it recurs "
+                      f"(attempt {LLM_ATTEMPTS[key]}/{MAX_LLM_ATTEMPTS})")
     else:
         print(f"  ⏭️  All issues already known — LLM skipped")
 

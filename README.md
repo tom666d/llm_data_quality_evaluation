@@ -14,7 +14,8 @@
    - for outliers, how concentrated the outlier values are;
    - for dates, the range of each date format.
 3. **Diagnose.** Agent 1 (GPT-4o-mini) states a root-cause hypothesis and the business impact, and names the observations that support it.
-4. **Remediate.** Agent 2 writes two remediation options with PySpark code. It is told to set unrecoverable values to null rather than invent them. A static critic checks that each snippet parses and assigns `df`, sends feedback for a retry (up to 2 times), and records the final pass/fail with the suggestions.
+4. **Remediate.** Agent 2 writes two remediation options with PySpark code. For values it cannot recover, it is told not to overwrite them. Instead it keeps the originals and flags those rows for quarantine.
+5. **Pre-check.** A static pre-check rejects any snippet that doesn't parse or never assigns `df`, and sends feedback for a retry (up to 2 times). This is a syntax gate, not a validation that the fix is correct. The result is recorded with the suggestions. An issue whose suggestions fail is retried if it recurs, up to 3 attempts.
 
 Recurring issues are logged every batch, but the LLM runs only once per unique `(column, issue_type)` pair in a session.
 
@@ -36,7 +37,7 @@ detector.py  (Spark Structured Streaming, 10s micro-batches)
 suggester.py
   ├── Agent 1   root cause + business impact, grounded in the evidence
   ├── Agent 2   2 remediation options with PySpark code
-  └── Critic    static check (parses, assigns df), retry with feedback
+  └── Critic    syntax pre-check (parses, assigns df), retry with feedback
         ▼
 data/issues_with_suggestions.json
 ```
