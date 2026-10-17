@@ -49,13 +49,13 @@ A system learns about an incident only from an alert. Alerts come from generic m
 | Monitor | Fires when, per column, window vs. baseline |
 |---|---|
 | Null rate | rises by at least 10 percentage points |
-| Numeric shift | the median or p95 changes by at least 3× |
+| Numeric shift | the p5, median, or p95 changes by at least 3× |
 | New categories | values unseen in the baseline make up at least 5% of rows |
 | String pattern | the share of a character-class pattern (e.g. `Aaa-9999`) changes by at least 10 pp |
 
 An alert carries the column, the monitor, the baseline value, the window value, and the window bounds. It never says what the mechanism is, what the scope is, or which rows are affected.
 
-Detection itself is out of scope. Every incident must trigger at least one alert, and the authoring checker (§5.3) enforces this.
+Detection itself is out of scope. Every incident must trigger at least one alert that the incident causes, meaning an alert that does not fire on the same window without the incident. The authoring checker (§5.3) enforces this.
 
 ## 5. Incidents
 
@@ -290,4 +290,6 @@ The rules were written **after** those failures had been seen. This result motiv
 
 ## Changelog
 
-*Empty until the freeze.*
+**2026-10-17, after freeze point 1 and before any held-out incident existed** (no results affected):
+- **§4, numeric shift.** The monitor also checks p5. With only the median and p95, downward shifts on part of a window were invisible. An example found while implementing it: one feed switching to monthly income moved p5 by 5.6×, but the median by only 1.10× and p95 by only 1.05×. Without p5, incident authors could only use upward shifts.
+- **§4, alerts.** An incident's alert must be one the incident causes, meaning it does not fire on the same window without the incident. Otherwise background alerts from natural drift could satisfy the "triggers an alert" requirement.
