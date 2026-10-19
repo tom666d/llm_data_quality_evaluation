@@ -158,7 +158,7 @@ The rules solved 12 incidents against the agent's 5, and changed no valid value.
 dqeval/          the evaluation: data, incidents, monitors, rule contract, scoring, methods, harness, report
 incident_sets/   the 12 dev incidents
 results/S1/      the held-out run: scored records, run metadata, report
-docs/            the method spec, the brief for the incident author, the sealed-set hashes
+docs/            the method spec, the brief for the incident author, the sealed-set hashes, a history note
 prototype/       the streaming prototype (not developed further)
 tests/           pytest suite (no API calls)
 ```

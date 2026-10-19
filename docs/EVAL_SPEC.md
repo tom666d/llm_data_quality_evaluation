@@ -1,6 +1,6 @@
 # Evaluation Spec
 
-This spec fixes the method before any held-out result exists. The original version was frozen at commit `4eadf71`. This text describes the method as it is now run; every change since the freeze is listed in the changelog at the end. The goal is a working evaluation that produces results, not exhaustive rigor.
+This spec fixes the method before any held-out result exists. The original version was frozen at commit `ecf2e52`. This text describes the method as it is now run; every change since the freeze is listed in the changelog at the end. The goal is a working evaluation that produces results, not exhaustive rigor.
 
 ---
 

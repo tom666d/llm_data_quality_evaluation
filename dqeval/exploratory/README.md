@@ -10,9 +10,9 @@ This comparison is why the project became an evaluation. It is preserved so that
 
 | Run | Prompt version (commit) | What changed |
 |---|---|---|
-| A | `3fbd0f9` | The evidence included interpretations, e.g. "suggests a sentinel" |
-| B | `3cc97d2` | The evidence states observations only; Agent 2 is told to null unrecoverable values |
-| C | `874eaf5` | Agent 2 is told to flag unrecoverable rows instead of nulling them |
+| A | `762326c` | The evidence included interpretations, e.g. "suggests a sentinel" |
+| B | `1a4cc7a` | The evidence states observations only; Agent 2 is told to null unrecoverable values |
+| C | `ca8e103` | Agent 2 is told to flag unrecoverable rows instead of nulling them |
 
 ## Result
 
