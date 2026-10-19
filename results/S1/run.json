@@ -1,0 +1,28 @@
+{
+  "split": "S1",
+  "arms": [
+    "A0",
+    "A1",
+    "A2",
+    "A3-v1",
+    "A3-sql",
+    "A4"
+  ],
+  "runs_per_llm_arm": 5,
+  "incident_file": "/Users/tomhsieh6/dq_heldout/S1.json",
+  "incident_sha256": "09481ddee13ee03291c74fb06bf7b64b64fe7d1dfd3b2e99a3041d49aa8ef9bc",
+  "git_commit": "7d3d379e5e800bff9a1d5cf5814e8fd8b5cd0305",
+  "git_dirty": false,
+  "git_tags": [
+    "eval-freeze-m1"
+  ],
+  "started": "2026-10-17T16:15:40",
+  "packages": {
+    "duckdb": "1.5.6",
+    "sqlglot": "30.23.0",
+    "pandas": "2.2.3",
+    "numpy": "2.1.3",
+    "openai": "2.30.0"
+  },
+  "finished": "2026-10-17T17:48:56"
+}
