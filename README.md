@@ -2,13 +2,13 @@
 
 Data pipelines break in small, quiet ways. A feed starts sending blank values, a placeholder like `9999999`, or numbers in the wrong unit. In a team course project, **[DataGenie](https://github.com/tom666d/llm_data_quality_assistant)**, I built an LLM pipeline that writes code to fix problems like these.
 
-This repository is the follow-up. **I tested whether those LLM-written fixes are actually correct**, and compared them with simpler alternatives on problems where the right answer is known.
+This repository is the follow-up. **I tested whether those LLM-written fixes are actually correct**, and compared them with simpler alternatives on problems where the right answer is known. I designed the evaluation and built all of it: the test runner, the scoring, a hand-written rule baseline, and two new LLM methods to compare with the original pipeline.
 
 ---
 
 ## The answer in 30 seconds
 
-**Test incidents solved, out of 20.** Every method except the hand-written rules uses an LLM, the original course system included. An LLM can answer the same problem differently each time, so these three methods ran 5 times on every incident and got credit only if at least 3 of the 5 runs succeeded. The rules give the same answer every time, so they ran once.
+**Out of 20 test incidents, hand-written rules solved 12. The best LLM method solved 5.**
 
 ```
 Hand-written rules        ████████████  12
@@ -17,12 +17,79 @@ LLM with a fixed prompt   ████           4
 Original course system    ███            3
 ```
 
+Each **test incident** is a 2,000-row batch of loan records that sets off a data-quality alert. In most, one column was deliberately corrupted; in a few, the data is real and only looks unusual. Each method proposes one fix. A run **succeeds** if the fix repairs the bad values, or holds them back for review when the true values cannot be known, and changes no correct data. The full criteria are [further down](#what-one-test-looks-like).
+
+Every method except the hand-written rules uses an LLM, the original course system included. An LLM can answer the same problem differently each time, so these three methods ran 5 times on every incident and got credit only if at least 3 of the 5 runs succeeded. The rules give the same answer every time, so they ran once.
+
 - **Simple rules beat every LLM approach**, and they never changed data that was correct.
-- **The original LLM pipeline was risky:** 38% of its runs changed correct data.
-- **Giving the LLM tools barely helped.** The agent used 6× the tokens of a single LLM call to raise its success rate by 0.03.
-- **Problems nobody had anticipated went unsolved by every method**, rules and LLMs alike.
+- **The original LLM pipeline was risky:** 38 of its 100 runs changed correct values, about 400 values each on average. This is its top suggestion applied without the human review it was designed for.
+- **Giving the LLM tools barely helped.** The agent used 6× the tokens of the fixed-prompt method and raised the success rate only from 0.24 to 0.27.
+- **Corruption outside the three course-demo problems went unsolved by every method**, rules and LLMs alike.
 
 **Decision:** rules handle the problems they know, and anything else is held back for a human to review. The LLM should not write the fixes.
+
+---
+
+## Results in detail
+
+These are **20 test incidents**, written by a separate model and locked away before any method was built. Each LLM method ran 5 times per incident. The methods, the incidents, and what counts as a success are explained after the results, starting at [What was compared](#what-was-compared).
+
+| Method | Incidents solved | Success rate (all runs) | Runs that changed any correct value | Tokens per run |
+|---|---|---|---|---|
+| **Hand-written rules** | **12** | **0.60** | **0%** | 0 |
+| LLM agent with tools | 5 | 0.27 | 7% | 10,213 |
+| LLM with a fixed prompt | 4 | 0.24 | 1% | 1,651 |
+| Original course system | 3 | 0.19 | 38% | 1,589 |
+
+*Incidents solved* uses the 3-of-5 bar; *success rate* counts every run. That is why the agent solved 5 of 20 incidents but has a success rate of 0.27: 27 of its 100 runs succeeded.
+
+For reference, *change nothing* solves 4 incidents (the "leave it alone" ones), and *hold back the whole batch* solves 0.
+
+**Known vs. new problems.** "Known" means a variation of the three problems in the course demo: blank values, a placeholder, and overwritten values. "New" means anything else, including real data that only looks unusual. Half of the incidents are each.
+
+| Success rate | Known problems | New problems |
+|---|---|---|
+| Hand-written rules | **0.90** | 0.30 |
+| LLM agent with tools | 0.38 | 0.16 |
+| LLM with a fixed prompt | 0.42 | 0.06 |
+| Original course system | 0.32 | 0.06 |
+
+The rules' 0.30 on new problems comes only from the "leave it alone" incidents. Six new kinds of corruption were solved by no method:
+- a unit change;
+- a decimal shift;
+- a sign flip;
+- an added offset;
+- bucketing;
+- truncation.
+
+The closest any method came: the agent fixed the sign flip in 1 of 5 runs, short of the 3 needed.
+
+Every table: [`results/S1/report.md`](results/S1/report.md).
+
+---
+
+## Why the LLM methods fell short
+
+These are patterns observed in this setup, with `gpt-4o-mini` and one prompt design. They are not claims about LLMs in general.
+
+1. **They misread the problem.** The course system treated a placeholder as missing data, and an overwritten date as a formatting issue. When the true value could be rebuilt, the best LLM methods succeeded in 5 of 30 runs (17%); the rules solved 2 of 6 incidents (33%).
+2. **They invented values.** When the true value was unknowable, they filled in something plausible: a median, a cap, a guess. [Incident S1-11](#what-one-test-looks-like) shows the agent doing this even after it had queried the data.
+3. **They acted when nothing was wrong.** On "leave it alone" incidents, the fixed-prompt LLM succeeded in 15% of runs and the agent in 35%. The rules handled 3 of the 4.
+4. **They were inconsistent.** The same input gave different answers across runs. The fixed-prompt LLM got all 5 runs right on only 1 incident out of 20; the agent never did.
+5. **Tools did not fix judgment.** The agent used about 5 of its 20 allowed tool calls and raised the success rate only from 0.24 to 0.27.
+
+---
+
+## Decision
+
+The rule for adopting a method was written down **before** any results existed:
+
+> If the rules solve at least as many test incidents as the best LLM method, and harm no more correct data, rules stay primary.
+
+The rules solved 12 incidents against the agent's 5, and changed no correct value. So:
+- **Known problems:** hand-written rules.
+- **Anything else:** hold the rows back, and a human decides.
+- **The LLM:** not used to write fixes. Whether it could help explain incidents to the reviewer was not tested.
 
 ---
 
@@ -45,7 +112,7 @@ All LLM methods use `gpt-4o-mini`.
 
 ## What one test looks like
 
-**Incident S1-11.** Each incident corrupts one column in a 2,000-row batch of loan records. Here, one data feed starts sending a placeholder income of `9,999,999`. This is the same kind of problem the course demo used.
+**Incident S1-11.** In this 2,000-row batch of loan records, one data feed starts sending a placeholder income of `9,999,999`. This is the same kind of problem the course demo used.
 
 > **Alert:** `annual_inc`: the 95th percentile jumped from 160,000 to 9,999,999.
 
@@ -69,72 +136,13 @@ The agent had the evidence and still made values up. Across all six incidents wh
 | wrong, and the true value is unknowable | **Hold back** the rows for a human, values untouched |
 | real, just unusual | **Leave it alone** |
 
----
-
-## Results in detail
-
-These are **20 test incidents**, written by a separate model and locked away before any method was built. Each LLM method ran 5 times per incident.
-
-| Method | Incidents solved | Success rate (all runs) | Runs that changed correct data | Tokens per run |
-|---|---|---|---|---|
-| **Hand-written rules** | **12** | **0.60** | **0%** | 0 |
-| LLM agent with tools | 5 | 0.27 | 7% | 10,213 |
-| LLM with a fixed prompt | 4 | 0.24 | 1% | 1,651 |
-| Original course system | 3 | 0.19 | 38% | 1,589 |
-
-For reference, *change nothing* solves 4 incidents (the "leave it alone" ones), and *hold back the whole batch* solves 0.
-
 **A run counts as a success only if:**
 1. the fix runs;
 2. it handles at least 95% of the corrupted values correctly;
 3. it changes no correct value and holds back at most 1% of correct rows;
 4. applied to later, clean data, it still changes nothing.
 
-**Known vs. new problems.** Half of the incidents are variations of the three problems in the course demo; the other half are new.
-
-| Success rate | Known problems | New problems |
-|---|---|---|
-| Hand-written rules | **0.90** | 0.30 |
-| LLM agent with tools | 0.38 | 0.16 |
-| LLM with a fixed prompt | 0.42 | 0.06 |
-| Original course system | 0.32 | 0.06 |
-
-The rules' 0.30 on new problems comes only from the "leave it alone" incidents. Six new kinds of corruption were solved by no method:
-- a unit change;
-- a decimal shift;
-- a sign flip;
-- an added offset;
-- bucketing;
-- truncation.
-
-The one exception: the agent fixed the sign flip in 1 of 5 runs.
-
-Every table: [`results/S1/report.md`](results/S1/report.md).
-
 ---
-
-## Why the LLM methods fell short
-
-These are patterns observed in this setup, with `gpt-4o-mini` and one prompt design. They are not claims about LLMs in general.
-
-1. **They misread the problem.** The course system treated a placeholder as missing data, and an overwritten date as a formatting issue. When the true value could be rebuilt, the LLM methods managed it at most 17% of the time; the rules managed 33%.
-2. **They invented values.** When the true value was unknowable, they filled in something plausible: a median, a cap, a guess.
-3. **They acted when nothing was wrong.** On "leave it alone" incidents, the fixed-prompt LLM succeeded 15% of the time and the agent 35%. The rules succeeded 75% of the time.
-4. **They were inconsistent.** The same input gave different answers across runs. The fixed-prompt LLM got all 5 runs right on only 1 incident out of 20; the agent never did.
-5. **Tools did not fix judgment.** The agent used about 5 of its 20 allowed tool calls and gained only 0.03 in success rate.
-
----
-
-## Decision
-
-The rule for adopting a method was written down **before** any results existed:
-
-> If the rules solve at least as many test incidents as the best LLM method, and harm no more correct data, rules stay primary.
-
-The rules solved 12 incidents against the agent's 5, and changed no correct value. So:
-- **Known problems:** hand-written rules.
-- **Anything else:** hold the rows back, and a human decides.
-- **The LLM:** not used to write fixes. Whether it could help explain incidents to the reviewer was not tested.
 
 ## How the test was kept fair
 
@@ -175,6 +183,8 @@ tests/           pytest suite (no API calls)
 ```
 
 ## Reproduce
+
+The runner names the methods by code: `A0` change nothing, `A1` hold back the whole batch, `A2` hand-written rules, `A3-v1` original course system, `A3-sql` LLM with a fixed prompt, `A4` LLM agent with tools.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
