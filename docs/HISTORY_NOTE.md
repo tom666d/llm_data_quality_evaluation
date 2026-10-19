@@ -1,6 +1,6 @@
 # History note
 
-On 2026-10-18 this project moved from the repository `data-quality-agent` to this one. While moving it, commit messages were rewritten to drop AI co-author trailers.
+On 2026-10-18 this project moved from the repository `data-quality-agent` to this one. While moving it, commit messages were rewritten to drop co-author trailers.
 
 - **Nothing else changed.** Every commit keeps its file contents (the same git tree), its author date, and its commit date.
 - **The tag `eval-freeze-m1`** points to the rewritten commit and keeps its original tag date: 2026-10-17 16:15:23 -0500.

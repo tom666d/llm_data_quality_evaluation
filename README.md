@@ -150,7 +150,6 @@ The rules solved 12 incidents against the agent's 5, and changed no valid value.
 
 - **The course project.** *DataGenie* was built by Team 6 for the Big Data Analytics course in the MSBA program at the Carlson School of Management, University of Minnesota. The team was Sean Cabaniss, Yung Hsuan Hsieh, Ching-Fen Hung, Yonghui Kim, and Omkar Thombare. I was the team's LLM engineer and built the LLM pipeline with Ching-Fen Hung. It is evaluated here as submitted ([provenance](dqeval/arms/v1/PROVENANCE.md)).
 - **My extension.** I added a streaming prototype on Kafka and Spark Structured Streaming ([`prototype/`](prototype/)), and then this evaluation. The [exploratory comparison](dqeval/exploratory/) that prompted it is preserved.
-- **Tools.** Developed with Claude Code as a pair programmer. Codex acted as a mock reviewer and wrote the sealed incident sets.
 
 ## Repository
 
