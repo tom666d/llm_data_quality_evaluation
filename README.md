@@ -1,6 +1,6 @@
 # DataGenie: Should an LLM fix your data?
 
-Data pipelines break in small, quiet ways. A feed starts sending blank values, a placeholder like `9999999`, or numbers in the wrong unit. In a team course project, **[DataGenie](https://github.com/tom666d/big_data_team_6)**, I built an LLM pipeline that writes code to fix problems like these.
+Data pipelines break in small, quiet ways. A feed starts sending blank values, a placeholder like `9999999`, or numbers in the wrong unit. In a team course project, **[DataGenie](https://github.com/tom666d/llm_data_quality_assistant)**, I built an LLM pipeline that writes code to fix problems like these.
 
 This repository is the follow-up. **I tested whether those LLM-written fixes are actually correct**, and compared them with simpler alternatives on problems where the right answer is known.
 
@@ -158,7 +158,7 @@ Full method: [`docs/EVAL_SPEC.md`](docs/EVAL_SPEC.md).
 
 - **The course project.** *DataGenie* was built by Team 6 for the Big Data Analytics course in the MSBA program at the Carlson School of Management, University of Minnesota. The team was Sean Cabaniss, Yung Hsuan Hsieh, Ching-Fen Hung, Yonghui Kim, and Omkar Thombare.
   - I was the team's LLM engineer and built the LLM pipeline with Ching-Fen Hung.
-  - Team repository: [tom666d/big_data_team_6](https://github.com/tom666d/big_data_team_6). My snapshot of the submitted version: [llm_data_quality_assistant](https://github.com/tom666d/llm_data_quality_assistant). How it is used here: [provenance](dqeval/arms/v1/PROVENANCE.md).
+  - The submitted version: [llm_data_quality_assistant](https://github.com/tom666d/llm_data_quality_assistant). How it is used here: [provenance](dqeval/arms/v1/PROVENANCE.md).
 - **My extension.** I added a streaming prototype on Kafka and Spark Structured Streaming ([`prototype/`](prototype/)), and then built this evaluation. The [first exploratory comparison](dqeval/exploratory/) that prompted it is preserved.
 
 ## Repository
@@ -178,8 +178,8 @@ tests/           pytest suite (no API calls)
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Reference data: the course dataset, from the team repository at the submitted commit
-git -C <path-to-team-repo> show b01ef2e:data/LendingClub_100k.csv > data/LendingClub_100k.csv
+# Reference data: the course dataset at the submitted commit, from a clone of llm_data_quality_assistant
+git -C <path-to-llm_data_quality_assistant> show b01ef2e:data/LendingClub_100k.csv > data/LendingClub_100k.csv
 
 python -m pytest                                   # tests, no API calls
 python -m dqeval.report results/S1                 # rebuild the result tables from the saved records
