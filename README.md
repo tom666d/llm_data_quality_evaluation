@@ -8,7 +8,7 @@ This repository is the follow-up. **I tested whether those LLM-written fixes are
 
 ## The answer in 30 seconds
 
-**Test incidents solved, out of 20.** For the LLM methods, an incident counts as solved when at least 3 of 5 runs succeed.
+**Test incidents solved, out of 20.** Every method except the hand-written rules uses an LLM, the original course system included. An LLM can answer the same problem differently each time, so these three methods ran 5 times on every incident and got credit only if at least 3 of the 5 runs succeeded. The rules give the same answer every time, so they ran once.
 
 ```
 Hand-written rules        ████████████  12
@@ -33,11 +33,13 @@ Every method gets the same alert and the same data, and must propose **one fix**
 | Method | How it decides |
 |---|---|
 | **Hand-written rules** | About 300 lines of if-then logic, no LLM. For example: "if one value makes up most of the outliers, hold those rows back". Written using 12 practice incidents |
-| **Original course system** | DataGenie as submitted. One LLM call diagnoses the problem and another writes free-form PySpark fix code. Run unchanged |
+| **Original course system** | DataGenie as submitted. One LLM call diagnoses the problem and another writes free-form PySpark fix code. Run unchanged, but only its first option is scored (see below) |
 | **LLM with a fixed prompt** | One LLM call. It receives a summary of the data and must answer with a single SQL rule |
 | **LLM agent with tools** | The same summary, but it can also run SQL queries and test its rule before submitting. It is allowed up to 20 tool calls |
 
 All LLM methods use `gpt-4o-mini`.
+
+**The course system was built for a person to make the final call.** For each alert it offers three options: two fixes and "decline changes". A reviewer picks one in a dashboard. This test has no reviewer, so it always takes option 1, the fix the system was more confident in, in every run. Its score shows what happens when that top suggestion is applied without review. It does not measure the system with a person choosing.
 
 ---
 
